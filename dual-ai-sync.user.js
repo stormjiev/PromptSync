@@ -103,21 +103,43 @@
   }
 
   // ---------- 是否仍在上传 ----------
+  // 仅在 composer/form 范围内检测，避免页面其他位置常驻的 spinner / 进度条造成误判
   function isUploading() {
     const sels = adapter.uploadingSelectors || [];
-    return sels.some(s => document.querySelector(s));
+    const scope =
+      adapter.findSend()?.closest('form') ||
+      adapter.findEditor()?.closest('form') ||
+      adapter.findEditor()?.parentElement ||
+      document;
+    return sels.some(s => scope.querySelector(s));
   }
 
-  // ---------- 点击发送（等按钮可点 + 等上传完成） ----------
-  function clickSend(retries = 60) {
+  // ---------- 兜底：直接在编辑器上按回车发送 ----------
+  function pressEnter() {
+    const editor = adapter.findEditor();
+    if (!editor) return;
+    editor.focus();
+    const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    editor.dispatchEvent(new KeyboardEvent('keydown', opts));
+    editor.dispatchEvent(new KeyboardEvent('keypress', opts));
+    editor.dispatchEvent(new KeyboardEvent('keyup', opts));
+  }
+
+  // ---------- 点击发送（等按钮可点 + 有文件时等上传完成） ----------
+  function clickSend(hasFiles, retries = 60) {
     const btn = adapter.findSend();
     const ready = btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
-    if (ready && !isUploading()) {
+    // 只有真正附带文件时才等待上传；纯文本不受上传指示器影响
+    if (ready && (!hasFiles || !isUploading())) {
       btn.click();
       return;
     }
-    if (retries > 0) setTimeout(() => clickSend(retries - 1), 300);
-    else console.warn('[dual-ai] 发送按钮不可用或上传未完成，请手动发送');
+    if (retries > 0) {
+      setTimeout(() => clickSend(hasFiles, retries - 1), 300);
+    } else {
+      console.warn('[dual-ai] 发送按钮不可用，改用回车兜底发送');
+      pressEnter();
+    }
   }
 
   // ---------- 开启新对话（Cmd+Shift+O） ----------
@@ -157,9 +179,10 @@
       if (p.text) setText(p.text);
       if (p.send) {
         // 文件逐个粘贴（每个间隔 250ms），等全部注入后再点；
-        // clickSend 内部还会轮询等上传完成
+        // clickSend 内部还会轮询等上传完成（仅在有文件时）
         const delay = files.length ? 600 + files.length * 250 : 300;
-        setTimeout(clickSend, delay);
+        const hasFiles = files.length > 0;
+        setTimeout(() => clickSend(hasFiles), delay);
       }
     };
 
