@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT + Gemini 双网页同步输入
 // @namespace    dual-ai-sync
-// @version      0.4
-// @description  浮动小框输入/粘贴图片 → 回车 → ChatGPT 与 Gemini 两个网页自动填入并发送
+// @version      0.5
+// @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
@@ -29,6 +29,12 @@
         document.querySelector('button[data-testid="send-button"]') ||
         document.querySelector('#composer-submit-button') ||
         document.querySelector('button[aria-label*="Send" i]'),
+      // 上传中指示器：进度条 / 旋转 spinner（任一存在即视为上传未完成）
+      uploadingSelectors: [
+        'div[role="progressbar"]',
+        '[data-testid="composer-attachment-loading"]',
+        '.animate-spin',
+      ],
     },
     gemini: {
       findEditor: () =>
@@ -39,6 +45,12 @@
         document.querySelector('button.send-button') ||
         document.querySelector('button[aria-label*="Send" i]') ||
         document.querySelector('button[aria-label*="发送"]'),
+      uploadingSelectors: [
+        'mat-progress-bar',
+        '[role="progressbar"]',
+        '.mat-mdc-progress-bar',
+        '.uploading',
+      ],
     },
   };
 
@@ -71,35 +83,41 @@
     return true;
   }
 
-  // ---------- 注入图片（重建 paste 事件） ----------
-  function pasteImage(dataUrl) {
+  // ---------- 注入图片/文件（重建 paste 事件） ----------
+  // 逐个文件分发：ChatGPT(ProseMirror) 的粘贴处理每次只取首个文件，
+  // 一次性塞多个只会进 1 个；Gemini 虽支持多个，但逐个分发同样兼容。
+  function pasteFiles(files, i = 0) {
     const editor = adapter.findEditor();
-    if (!editor) return;
+    if (!editor || i >= files.length) return;
     editor.focus();
 
-    const [meta, b64] = dataUrl.split(',');
-    const mime = (meta.match(/data:(.*?);/) || [])[1] || 'image/png';
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const file = new File([bytes], 'pasted.png', { type: mime });
-
     const dt = new DataTransfer();
-    dt.items.add(file);
+    dt.items.add(files[i]);
     editor.dispatchEvent(new ClipboardEvent('paste', {
       bubbles: true, cancelable: true, clipboardData: dt,
     }));
+
+    if (i + 1 < files.length) {
+      setTimeout(() => pasteFiles(files, i + 1), 250);
+    }
   }
 
-  // ---------- 点击发送（等按钮可点） ----------
-  function clickSend(retries = 12) {
+  // ---------- 是否仍在上传 ----------
+  function isUploading() {
+    const sels = adapter.uploadingSelectors || [];
+    return sels.some(s => document.querySelector(s));
+  }
+
+  // ---------- 点击发送（等按钮可点 + 等上传完成） ----------
+  function clickSend(retries = 60) {
     const btn = adapter.findSend();
-    if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+    const ready = btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+    if (ready && !isUploading()) {
       btn.click();
       return;
     }
-    if (retries > 0) setTimeout(() => clickSend(retries - 1), 200);
-    else console.warn('[dual-ai] 发送按钮不可用，请手动发送');
+    if (retries > 0) setTimeout(() => clickSend(retries - 1), 300);
+    else console.warn('[dual-ai] 发送按钮不可用或上传未完成，请手动发送');
   }
 
   // ---------- 开启新对话（Cmd+Shift+O） ----------
@@ -118,17 +136,30 @@
     document.dispatchEvent(new KeyboardEvent('keyup', opts));
   }
 
+  // ---------- dataURL -> File ----------
+  function dataUrlToFile(dataUrl, name) {
+    const [meta, b64] = dataUrl.split(',');
+    const mime = (meta.match(/data:(.*?);/) || [])[1] || 'application/octet-stream';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], name || 'file', { type: mime });
+  }
+
   // ---------- 应用一条广播 ----------
   function applyPayload(p) {
     if (!p || p.seq === lastSeq) return;
     lastSeq = p.seq;
 
     const run = () => {
-      if (p.image) pasteImage(p.image);
+      const files = (p.files || []).map(f => dataUrlToFile(f.data, f.name));
+      if (files.length) pasteFiles(files);
       if (p.text) setText(p.text);
       if (p.send) {
-        // 图片需要时间上传，多等一会
-        setTimeout(clickSend, p.image ? 1500 : 500);
+        // 文件逐个粘贴（每个间隔 250ms），等全部注入后再点；
+        // clickSend 内部还会轮询等上传完成
+        const delay = files.length ? 600 + files.length * 250 : 300;
+        setTimeout(clickSend, delay);
       }
     };
 
@@ -150,8 +181,8 @@
     applyPayload(payload); // 本页也执行
   }
 
-  function send(text, image, doSend, newChat) {
-    broadcast({ seq: Date.now(), text, image: image || null, send: doSend, newChat: !!newChat });
+  function send(text, files, doSend, newChat) {
+    broadcast({ seq: Date.now(), text, files: files || [], send: doSend, newChat: !!newChat });
   }
 
   // ---------- 浮动面板（只在 ChatGPT 显示；Gemini 仅后台接收） ----------
@@ -167,9 +198,9 @@
       <div id="dai-head" style="font-weight:bold;margin-bottom:2px;cursor:move;user-select:none;">
         ⠿ 同步输入
       </div>
-      <textarea id="dai-text" placeholder="输入问题，回车=两边发送 / Shift+Enter 换行，可直接粘贴图片"
+      <textarea id="dai-text" placeholder="输入问题，回车=两边发送 / Shift+Enter 换行；可粘贴或拖拽多张图片/文件"
         style="width:100%;height:108px;box-sizing:border-box;"></textarea>
-      <div id="dai-img" style="font-size:12px;color:#0a0;margin-top:4px;"></div>
+      <div id="dai-files" style="font-size:12px;color:#0a0;margin-top:4px;display:flex;flex-direction:column;gap:2px;"></div>
       <div style="display:flex;gap:0px;margin-top:2px;">
         <button id="dai-fill" style="flex:1;padding:2px 0;">同步填入</button>
         <button id="dai-send" style="flex:1;padding:2px 0;">同步发送</button>
@@ -178,30 +209,80 @@
     document.body.appendChild(panel);
 
     const ta = panel.querySelector('#dai-text');
-    const imgLabel = panel.querySelector('#dai-img');
-    let pendingImage = null;
-    const clear = () => { ta.value = ''; pendingImage = null; imgLabel.textContent = ''; };
+    const fileList = panel.querySelector('#dai-files');
+    // 每项 { name, type, data(dataURL) }
+    let pendingFiles = [];
+
+    const renderFiles = () => {
+      fileList.innerHTML = '';
+      pendingFiles.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        const isImg = (f.type || '').startsWith('image/');
+        const label = document.createElement('span');
+        label.textContent = `${isImg ? '🖼' : '📎'} ${f.name}`;
+        label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;';
+        const del = document.createElement('span');
+        del.textContent = '✕';
+        del.style.cssText = 'cursor:pointer;color:#c00;flex:none;';
+        del.onclick = () => { pendingFiles.splice(i, 1); renderFiles(); };
+        row.appendChild(label);
+        row.appendChild(del);
+        fileList.appendChild(row);
+      });
+    };
+
+    const clear = () => { ta.value = ''; pendingFiles = []; renderFiles(); };
+
+    // 读取一批 File 对象为 dataURL 并加入待发送列表
+    const addFiles = (files) => {
+      [...files].forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          pendingFiles.push({ name: file.name || 'file', type: file.type, data: reader.result });
+          renderFiles();
+        };
+        reader.readAsDataURL(file);
+      });
+    };
 
     ta.addEventListener('paste', (e) => {
-      const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
-      if (!item) return;
+      const items = [...(e.clipboardData?.items || [])];
+      const files = items
+        .filter(i => i.kind === 'file')
+        .map(i => i.getAsFile())
+        .filter(Boolean);
+      if (!files.length) return;
       e.preventDefault();
-      const reader = new FileReader();
-      reader.onload = () => { pendingImage = reader.result; imgLabel.textContent = '✓ 已附带图片'; };
-      reader.readAsDataURL(item.getAsFile());
+      addFiles(files);
+    });
+
+    // ---------- 拖拽文件进面板 ----------
+    const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+    ['dragenter', 'dragover'].forEach(ev => panel.addEventListener(ev, (e) => {
+      stop(e);
+      panel.style.outline = '2px dashed #0a0';
+    }));
+    ['dragleave', 'drop'].forEach(ev => panel.addEventListener(ev, (e) => {
+      stop(e);
+      panel.style.outline = '';
+    }));
+    panel.addEventListener('drop', (e) => {
+      const files = [...(e.dataTransfer?.files || [])];
+      if (files.length) addFiles(files);
     });
 
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        send(ta.value, pendingImage, true, false);
+        send(ta.value, pendingFiles, true, false);
         clear();
       }
     });
 
-    panel.querySelector('#dai-fill').onclick = () => send(ta.value, pendingImage, false, false);
-    panel.querySelector('#dai-send').onclick = () => { send(ta.value, pendingImage, true, false); clear(); };
-    panel.querySelector('#dai-new').onclick  = () => { send(ta.value, pendingImage, true, true);  clear(); };
+    panel.querySelector('#dai-fill').onclick = () => send(ta.value, pendingFiles, false, false);
+    panel.querySelector('#dai-send').onclick = () => { send(ta.value, pendingFiles, true, false); clear(); };
+    panel.querySelector('#dai-new').onclick  = () => { send(ta.value, pendingFiles, true, true);  clear(); };
 
     // ---------- 拖拽 ----------
     const head = panel.querySelector('#dai-head');
