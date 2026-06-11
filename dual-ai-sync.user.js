@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT + Gemini 双网页同步输入
 // @namespace    dual-ai-sync
-// @version      0.5
-// @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送
+// @version      0.7
+// @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送；连续对话时等上一条回复生成完再发，避免重复发送
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
@@ -35,6 +35,13 @@
         '[data-testid="composer-attachment-loading"]',
         '.animate-spin',
       ],
+      // 正在生成回复的指示：流式输出时 composer 按钮变成"停止"按钮
+      stopSelectors: [
+        'button[data-testid="stop-button"]',
+        '#composer-submit-button[aria-label*="stop" i]',
+        '#composer-submit-button[aria-label*="停止"]',
+        'button[aria-label*="stop streaming" i]',
+      ],
     },
     gemini: {
       findEditor: () =>
@@ -51,10 +58,86 @@
         '.mat-mdc-progress-bar',
         '.uploading',
       ],
+      // 正在生成回复的指示：发送按钮切换为停止状态
+      stopSelectors: [
+        'button.send-button.stop',
+        'button[aria-label*="stop response" i]',
+        'button[aria-label*="停止回答"]',
+        'button[aria-label*="停止生成"]',
+      ],
     },
   };
 
   const adapter = ADAPTERS[SITE];
+
+  // 每次 applyPayload 触发发送时自增；旧的延迟发送任务若 token 过期则放弃，
+  // 避免上一条同步的兜底任务在用户手动输入后误触发
+  let sendToken = 0;
+  // 记录已成功发送的 token，防止同一任务重复点击
+  let sentTokens = new Set();
+
+  // ---------- 取消所有待执行的自动发送任务 ----------
+  // 一旦用户手动发送/手动改写输入，立刻作废脚本排队中的 clickSend 轮询，
+  // 防止"用户已经手动发了，几秒后脚本又自动补发一次"
+  function cancelPendingSends() {
+    sendToken++;
+  }
+
+  // ---------- 元素是否真实可见 ----------
+  // 站点不在生成回复时也可能把"停止"按钮留在 DOM 里（仅隐藏），
+  // 只看存在性会把隐藏按钮误判成"正在生成"，导致永远不自动发送
+  function isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+  }
+
+  // ---------- 是否正在生成回复 ----------
+  // 流式输出期间，两站的发送按钮都会变成"停止"按钮（元素本身可能不变），
+  // 此时点击只会截断回答而不会发送，必须等生成结束后再点
+  function isGenerating() {
+    const sels = adapter.stopSelectors || [];
+    return sels.some(s => [...document.querySelectorAll(s)].some(isVisible));
+  }
+
+  // 真实用户事件 isTrusted=true；脚本合成的 click/键盘事件 isTrusted=false。
+  // 用它区分"用户手动发送"与"脚本自动发送"，前者要取消后者排队的任务。
+  document.addEventListener('click', (e) => {
+    if (!e.isTrusted) return;
+    // 生成回复期间该按钮是"停止"，点它不是手动发送，不取消排队任务
+    if (isGenerating()) return;
+    const btn = adapter.findSend();
+    if (btn && (e.target === btn || (e.target.closest && e.target.closest('button') === btn))) {
+      cancelPendingSends();
+    }
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!e.isTrusted) return;
+    // 生成回复期间回车不会触发发送，不视为手动发送
+    if (isGenerating()) return;
+    // 用户在真实输入框里按回车（非 Shift）发送
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const editor = adapter.findEditor();
+      if (editor && (e.target === editor || (e.target.closest && editor.contains(e.target)))) {
+        cancelPendingSends();
+      }
+    }
+  }, true);
+
+  // ---------- 读取编辑器当前文本 ----------
+  function getEditorText() {
+    const editor = adapter.findEditor();
+    if (!editor) return '';
+    return (editor.isContentEditable ? editor.innerText : editor.value) || '';
+  }
+
+  // 仅当编辑器当前内容仍是脚本写入的那段文本时才允许发送，
+  // 防止把用户后来手动输入的内容当成同步内容发出去
+  function contentMatches(expected) {
+    return getEditorText().trim() === (expected || '').trim();
+  }
 
   // ---------- 写入文本 ----------
   function setText(text) {
@@ -115,9 +198,13 @@
   }
 
   // ---------- 兜底：直接在编辑器上按回车发送 ----------
-  function pressEnter() {
+  function pressEnter(expectedText) {
     const editor = adapter.findEditor();
     if (!editor) return;
+    // 回复还在生成中，回车不会发送，避免误触
+    if (isGenerating()) return;
+    // 内容已被用户改写/清空，放弃兜底发送
+    if (!contentMatches(expectedText)) return;
     editor.focus();
     const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
     editor.dispatchEvent(new KeyboardEvent('keydown', opts));
@@ -125,20 +212,56 @@
     editor.dispatchEvent(new KeyboardEvent('keyup', opts));
   }
 
-  // ---------- 点击发送（等按钮可点 + 有文件时等上传完成） ----------
-  function clickSend(hasFiles, retries = 60) {
+  // ---------- 点击发送（等按钮可点 + 回复生成完 + 有文件时等上传完成） ----------
+  // token：本次发送任务的标识，若期间又来新同步则作废；expectedText：脚本写入的文本；
+  // genDeadline：等待"上一条回复生成结束"的绝对截止时间，期间不消耗 retries
+  function clickSend(hasFiles, expectedText, token, retries = 60, genDeadline = Date.now() + 10 * 60 * 1000) {
+    // 已发送过此 token，放弃（避免重复点击）
+    if (sentTokens.has(token)) return;
+    // 有更新的发送任务产生，放弃本次（旧的兜底定时器不再误触发）
+    if (token !== sendToken) return;
+    // 编辑器内容已不是脚本写入的那段（用户清空或手动改写），放弃发送
+    if (!contentMatches(expectedText)) return;
     const btn = adapter.findSend();
     const ready = btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+    // 连续对话：上一条回复还在流式输出时按钮其实是"停止"，
+    // 此时点击会截断回答且不会发送，必须等生成结束
+    const generating = isGenerating();
     // 只有真正附带文件时才等待上传；纯文本不受上传指示器影响
-    if (ready && (!hasFiles || !isUploading())) {
+    if (ready && !generating && (!hasFiles || !isUploading())) {
+      sentTokens.add(token); // 标记已发送，防止后续轮询重复点击
       btn.click();
+      // 清理旧 token（保留最近 10 个，避免内存泄漏）
+      if (sentTokens.size > 10) {
+        const old = [...sentTokens].sort((a, b) => a - b)[0];
+        sentTokens.delete(old);
+      }
+      // 点击后校验：成功发送时站点会立刻清空输入框；若 1.5s 后脚本写入的
+      // 文本仍原样留在编辑器里，说明刚才那次点击没有真正发出（例如按钮
+      // 恰好切换成了停止态），撤销"已发送"标记继续等待重试，
+      // 防止"标记已发但实际未发"导致内容滞留后被重复发送。
+      // 纯文件无文本时无法用内容校验，维持点击即视为已发，避免误判重发。
+      if ((expectedText || '').trim()) {
+        setTimeout(() => {
+          if (token !== sendToken) return;
+          if (contentMatches(expectedText)) {
+            sentTokens.delete(token);
+            clickSend(hasFiles, expectedText, token, retries, genDeadline);
+          }
+        }, 1500);
+      }
+      return;
+    }
+    // 等待生成结束期间不消耗重试次数（回答可能持续数分钟），但有总截止时间兜底
+    if (generating && Date.now() < genDeadline) {
+      setTimeout(() => clickSend(hasFiles, expectedText, token, retries, genDeadline), 300);
       return;
     }
     if (retries > 0) {
-      setTimeout(() => clickSend(hasFiles, retries - 1), 300);
+      setTimeout(() => clickSend(hasFiles, expectedText, token, retries - 1, genDeadline), 300);
     } else {
       console.warn('[dual-ai] 发送按钮不可用，改用回车兜底发送');
-      pressEnter();
+      pressEnter(expectedText);
     }
   }
 
@@ -178,11 +301,13 @@
       if (files.length) pasteFiles(files);
       if (p.text) setText(p.text);
       if (p.send) {
+        // 作废之前可能仍在轮询的发送任务，并为本次分配新 token
+        const token = ++sendToken;
         // 文件逐个粘贴（每个间隔 250ms），等全部注入后再点；
-        // clickSend 内部还会轮询等上传完成（仅在有文件时）
+        // clickSend 内部还会轮询等上传完成（仅在有文件时），并校验内容/ token
         const delay = files.length ? 600 + files.length * 250 : 300;
         const hasFiles = files.length > 0;
-        setTimeout(() => clickSend(hasFiles), delay);
+        setTimeout(() => clickSend(hasFiles, p.text || '', token), delay);
       }
     };
 
@@ -213,16 +338,18 @@
     const panel = document.createElement('div');
     Object.assign(panel.style, {
       position: 'fixed', right: '24px', bottom: '110px', width: '384px',
-      zIndex: '999999', background: '#fff', border: '1px solid #ccc',
+      zIndex: '999999', background: 'rgba(255,255,255,0.55)',
+      border: '1px solid rgba(200,200,200,0.6)',
       borderRadius: '12px', padding: '12px', fontSize: '14px',
       boxShadow: '0 4px 18px rgba(0,0,0,0.2)', color: '#111',
+      backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
     });
     panel.innerHTML = `
       <div id="dai-head" style="font-weight:bold;margin-bottom:2px;cursor:move;user-select:none;">
         ⠿ 同步输入
       </div>
       <textarea id="dai-text" placeholder="输入问题，回车=两边发送 / Shift+Enter 换行；可粘贴或拖拽多张图片/文件"
-        style="width:100%;height:108px;box-sizing:border-box;"></textarea>
+        style="width:100%;height:108px;box-sizing:border-box;background:rgba(255,255,255,0.6);"></textarea>
       <div id="dai-files" style="font-size:12px;color:#0a0;margin-top:4px;display:flex;flex-direction:column;gap:2px;"></div>
       <div style="display:flex;gap:0px;margin-top:2px;">
         <button id="dai-fill" style="flex:1;padding:2px 0;">同步填入</button>
