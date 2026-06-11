@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT + Gemini 双网页同步输入
 // @namespace    dual-ai-sync
-// @version      0.7
-// @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送；连续对话时等上一条回复生成完再发，避免重复发送
+// @version      1.0
+// @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送；单任务只点一次发送键、绝不自动重试，杜绝截断回答和重复发送
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://gemini.google.com/*
@@ -73,8 +73,12 @@
   // 每次 applyPayload 触发发送时自增；旧的延迟发送任务若 token 过期则放弃，
   // 避免上一条同步的兜底任务在用户手动输入后误触发
   let sendToken = 0;
-  // 记录已成功发送的 token，防止同一任务重复点击
+  // 记录已点击过发送的 token。核心防重原则：一个发送任务物理上只点一次
+  // 发送键，点过就永不自动再点（即使发送成功检测失败也只提示、不重试），
+  // 宁可漏发让用户手动补一下，也绝不重复发送
   let sentTokens = new Set();
+  // token → 点击前对话中已存在的"同文本用户消息"条数，作为发送成功判定的基线
+  const tokenBaselines = new Map();
 
   // ---------- 取消所有待执行的自动发送任务 ----------
   // 一旦用户手动发送/手动改写输入，立刻作废脚本排队中的 clickSend 轮询，
@@ -94,12 +98,34 @@
     return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
   }
 
+  // ---------- 按钮当前是否处于"停止"态 ----------
+  // 两站的发送/停止常是同一个按钮，仅切换 aria-label / 类名 / 图标；
+  // 站点改版后固定的 stopSelectors 可能失配，所以直接检查按钮本身的特征
+  function isStopButton(btn) {
+    if (!btn) return false;
+    const label = (
+      (btn.getAttribute('aria-label') || '') + ' ' +
+      (btn.getAttribute('data-testid') || '') + ' ' +
+      (btn.getAttribute('title') || '')
+    ).toLowerCase();
+    if (/\bstop\b|stop[-_ ]?(button|streaming|response)/.test(label)) return true;
+    if (label.includes('停止') || label.includes('中止')) return true;
+    if (btn.classList.contains('stop')) return true;
+    // Gemini：按钮内 material 图标名为 stop
+    const icon = btn.querySelector('mat-icon');
+    if (icon && /stop/i.test(icon.getAttribute('data-mat-icon-name') || icon.textContent || '')) return true;
+    return false;
+  }
+
   // ---------- 是否正在生成回复 ----------
   // 流式输出期间，两站的发送按钮都会变成"停止"按钮（元素本身可能不变），
   // 此时点击只会截断回答而不会发送，必须等生成结束后再点
   function isGenerating() {
     const sels = adapter.stopSelectors || [];
-    return sels.some(s => [...document.querySelectorAll(s)].some(isVisible));
+    if (sels.some(s => [...document.querySelectorAll(s)].some(isVisible))) return true;
+    // 兜底：stopSelectors 失配时，检查"发送"按钮本身是否其实是停止态
+    const btn = adapter.findSend();
+    return !!(btn && isVisible(btn) && isStopButton(btn));
   }
 
   // 真实用户事件 isTrusted=true；脚本合成的 click/键盘事件 isTrusted=false。
@@ -137,6 +163,25 @@
   // 防止把用户后来手动输入的内容当成同步内容发出去
   function contentMatches(expected) {
     return getEditorText().trim() === (expected || '').trim();
+  }
+
+  // ---------- 对话中包含指定文本的"用户消息"条数 ----------
+  // 这是"消息真的发出去了"的最强信号：编辑器残留文本、停止按钮识别失败
+  // 都可能误导其他判断，但用户消息气泡一旦出现就说明发送成功。
+  // 与点击前记录的基线比较（条数增加才算），不影响用户重复问同一问题。
+  function normText(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+  function countSentMessages(text) {
+    // 长消息站点可能折叠显示，只用开头 80 字符做匹配
+    const needle = normText(text).slice(0, 80);
+    if (!needle) return 0;
+    let els;
+    if (SITE === 'chatgpt') {
+      els = [...document.querySelectorAll('[data-message-author-role="user"]')];
+    } else {
+      els = [...document.querySelectorAll('user-query')];
+      if (!els.length) els = [...document.querySelectorAll('[class*="user-query"]')];
+    }
+    return els.filter(el => normText(el.innerText).includes(needle)).length;
   }
 
   // ---------- 写入文本 ----------
@@ -220,6 +265,14 @@
     if (sentTokens.has(token)) return;
     // 有更新的发送任务产生，放弃本次（旧的兜底定时器不再误触发）
     if (token !== sendToken) return;
+    // 首次进入本任务时记录基线：对话里此刻已有多少条同文本的用户消息
+    if (!tokenBaselines.has(token)) tokenBaselines.set(token, countSentMessages(expectedText));
+    // 最强信号：对话中新出现了这条用户消息 → 已发送成功，
+    // 无论编辑器是否残留文本、按钮是什么状态，都绝不再点击
+    if (countSentMessages(expectedText) > tokenBaselines.get(token)) {
+      sentTokens.add(token);
+      return;
+    }
     // 编辑器内容已不是脚本写入的那段（用户清空或手动改写），放弃发送
     if (!contentMatches(expectedText)) return;
     const btn = adapter.findSend();
@@ -228,27 +281,35 @@
     // 此时点击会截断回答且不会发送，必须等生成结束
     const generating = isGenerating();
     // 只有真正附带文件时才等待上传；纯文本不受上传指示器影响
-    if (ready && !generating && (!hasFiles || !isUploading())) {
-      sentTokens.add(token); // 标记已发送，防止后续轮询重复点击
+    // isStopButton 再查一次按钮本身：即使 stopSelectors 全部失配，
+    // 也绝不把已切换成"停止"态的按钮当发送键点（点了会截断回答）
+    if (ready && !generating && !isStopButton(btn) && (!hasFiles || !isUploading())) {
+      // 核心防重：标记已点击。此标记永不撤销 → 本任务后续任何定时器、
+      // 任何校验逻辑都不可能再点第二次。曾经的"校验失败就撤销标记重试"
+      // 正是重复发送的病根：消息其实已发出但编辑器残留文字/按钮状态误判，
+      // 重试点击轻则截断回答（点中停止键）、重则同一问题问两遍。
+      sentTokens.add(token);
       btn.click();
       // 清理旧 token（保留最近 10 个，避免内存泄漏）
       if (sentTokens.size > 10) {
         const old = [...sentTokens].sort((a, b) => a - b)[0];
         sentTokens.delete(old);
+        tokenBaselines.delete(old);
       }
-      // 点击后校验：成功发送时站点会立刻清空输入框；若 1.5s 后脚本写入的
-      // 文本仍原样留在编辑器里，说明刚才那次点击没有真正发出（例如按钮
-      // 恰好切换成了停止态），撤销"已发送"标记继续等待重试，
-      // 防止"标记已发但实际未发"导致内容滞留后被重复发送。
-      // 纯文件无文本时无法用内容校验，维持点击即视为已发，避免误判重发。
+      // 点击后校验（轮询 5s）只用于提示，绝不自动重试点击。
+      // 成功信号任一出现即静默结束：① 对话中新出现这条用户消息；
+      // ② 编辑器已清空；③ 检测到正在生成回复。全部落空仅在控制台告警，
+      // 文字会留在输入框里，由用户自行决定是否手动发送。
       if ((expectedText || '').trim()) {
-        setTimeout(() => {
+        const verifyUntil = Date.now() + 5000;
+        const verify = () => {
           if (token !== sendToken) return;
-          if (contentMatches(expectedText)) {
-            sentTokens.delete(token);
-            clickSend(hasFiles, expectedText, token, retries, genDeadline);
-          }
-        }, 1500);
+          if (countSentMessages(expectedText) > tokenBaselines.get(token) ||
+              !contentMatches(expectedText) || isGenerating()) return;
+          if (Date.now() < verifyUntil) { setTimeout(verify, 250); return; }
+          console.warn('[dual-ai] 未检测到发送成功信号；为避免重复发送不会自动重试，若消息未发出请手动点击发送');
+        };
+        setTimeout(verify, 250);
       }
       return;
     }
@@ -338,7 +399,7 @@
     const panel = document.createElement('div');
     Object.assign(panel.style, {
       position: 'fixed', right: '24px', bottom: '110px', width: '384px',
-      zIndex: '999999', background: 'rgba(255,255,255,0.55)',
+      zIndex: '999999', background: 'rgba(255,255,255,0.1)',
       border: '1px solid rgba(200,200,200,0.6)',
       borderRadius: '12px', padding: '12px', fontSize: '14px',
       boxShadow: '0 4px 18px rgba(0,0,0,0.2)', color: '#111',
@@ -346,10 +407,10 @@
     });
     panel.innerHTML = `
       <div id="dai-head" style="font-weight:bold;margin-bottom:2px;cursor:move;user-select:none;">
-        ⠿ 同步输入
+        ⠿ 同步输入 v${(typeof GM_info !== 'undefined' && GM_info.script.version) || '?'}
       </div>
       <textarea id="dai-text" placeholder="输入问题，回车=两边发送 / Shift+Enter 换行；可粘贴或拖拽多张图片/文件"
-        style="width:100%;height:108px;box-sizing:border-box;background:rgba(255,255,255,0.6);"></textarea>
+        style="width:100%;height:108px;box-sizing:border-box;background:rgba(255,255,255,0.1);"></textarea>
       <div id="dai-files" style="font-size:12px;color:#0a0;margin-top:4px;display:flex;flex-direction:column;gap:2px;"></div>
       <div style="display:flex;gap:0px;margin-top:2px;">
         <button id="dai-fill" style="flex:1;padding:2px 0;">同步填入</button>
@@ -423,6 +484,8 @@
     });
 
     ta.addEventListener('keydown', (e) => {
+      // 输入法组合中按回车是在确认候选词，不是要发送（keyCode 229 = IME 处理中）
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         send(ta.value, pendingFiles, true, false);
