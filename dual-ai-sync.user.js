@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT + Gemini 双网页同步输入
 // @namespace    dual-ai-sync
-// @version      1.0
+// @version      1.1
 // @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送；单任务只点一次发送键、绝不自动重试，杜绝截断回答和重复发送
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18,13 +18,40 @@
   const SITE = location.hostname.includes('gemini') ? 'gemini' : 'chatgpt';
   let lastSeq = 0;
 
+  // ---------- 诊断日志 ----------
+  // 每个站点各存一份（GM 存储跨标签页共享），面板上可一键导出两站合并日志，
+  // 用于排查"没发送/重复发送"这类时序问题，不必在两个页面分别开 F12
+  const LOG_KEY = 'dual_ai_logs_' + SITE;
+  let logBuf;
+  try { logBuf = GM_getValue(LOG_KEY, []) || []; } catch (e) { logBuf = []; }
+  function dlog(msg) {
+    const line = `[${new Date().toISOString().replace('T', ' ').slice(0, 23)}][${SITE}] ${msg}`;
+    console.log('[dual-ai] ' + msg);
+    logBuf.push(line);
+    if (logBuf.length > 400) logBuf = logBuf.slice(-400);
+    try { GM_setValue(LOG_KEY, logBuf); } catch (e) { /* 存储失败不影响主流程 */ }
+  }
+
+  // ---------- 跨标签页/跨实例发送锁 ----------
+  // 单页面内有 sentTokens 防重，但若同一站点开了多个标签页（或脚本被注入
+  // 进 iframe），每个实例都会收到广播并各自点一次发送 → 同一条消息发两遍。
+  // 用 GM 存储记录"本站点已发送的最新 seq"，任何实例点击前先抢锁。
+  const SENT_SEQ_KEY = 'dual_ai_last_sent_seq_' + SITE;
+  function seqAlreadySent(seq) {
+    try { return GM_getValue(SENT_SEQ_KEY, 0) >= seq; } catch (e) { return false; }
+  }
+  function markSeqSent(seq) {
+    try { GM_setValue(SENT_SEQ_KEY, seq); } catch (e) { /* ignore */ }
+  }
+
   // ---------- 站点适配：编辑器 & 发送按钮 ----------
   const ADAPTERS = {
     chatgpt: {
       findEditor: () =>
         document.querySelector('#prompt-textarea') ||
         document.querySelector('div[contenteditable="true"].ProseMirror') ||
-        document.querySelector('textarea'),
+        // 排除脚本自己的浮动面板输入框，避免被当成站点编辑器
+        document.querySelector('textarea:not(#dai-text)'),
       findSend: () =>
         document.querySelector('button[data-testid="send-button"]') ||
         document.querySelector('#composer-submit-button') ||
@@ -79,12 +106,15 @@
   let sentTokens = new Set();
   // token → 点击前对话中已存在的"同文本用户消息"条数，作为发送成功判定的基线
   const tokenBaselines = new Map();
+  // token → 上次输出"等待发送条件"日志的时间，限频避免 300ms 轮询刷屏
+  const waitLogAt = new Map();
 
   // ---------- 取消所有待执行的自动发送任务 ----------
   // 一旦用户手动发送/手动改写输入，立刻作废脚本排队中的 clickSend 轮询，
   // 防止"用户已经手动发了，几秒后脚本又自动补发一次"
-  function cancelPendingSends() {
+  function cancelPendingSends(reason) {
     sendToken++;
+    dlog('取消排队中的自动发送任务：' + (reason || '未注明原因'));
   }
 
   // ---------- 元素是否真实可见 ----------
@@ -136,7 +166,7 @@
     if (isGenerating()) return;
     const btn = adapter.findSend();
     if (btn && (e.target === btn || (e.target.closest && e.target.closest('button') === btn))) {
-      cancelPendingSends();
+      cancelPendingSends('用户手动点击了站点的发送按钮');
     }
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -147,7 +177,7 @@
     if (e.key === 'Enter' && !e.shiftKey) {
       const editor = adapter.findEditor();
       if (editor && (e.target === editor || (e.target.closest && editor.contains(e.target)))) {
-        cancelPendingSends();
+        cancelPendingSends('用户在站点输入框中按回车手动发送');
       }
     }
   }, true);
@@ -160,9 +190,12 @@
   }
 
   // 仅当编辑器当前内容仍是脚本写入的那段文本时才允许发送，
-  // 防止把用户后来手动输入的内容当成同步内容发出去
+  // 防止把用户后来手动输入的内容当成同步内容发出去。
+  // 必须做空白归一化：多行文本在 ProseMirror/Quill 里按段落渲染，
+  // innerText 读回来是 "\n\n"，与原文 "\n" 严格比对必然失配，
+  // 曾导致多行消息在两站都被静默放弃发送（填入了却不发）
   function contentMatches(expected) {
-    return getEditorText().trim() === (expected || '').trim();
+    return normText(getEditorText()) === normText(expected);
   }
 
   // ---------- 对话中包含指定文本的"用户消息"条数 ----------
@@ -243,13 +276,17 @@
   }
 
   // ---------- 兜底：直接在编辑器上按回车发送 ----------
-  function pressEnter(expectedText) {
+  function pressEnter(expectedText, seq) {
     const editor = adapter.findEditor();
-    if (!editor) return;
+    if (!editor) { dlog(`回车兜底失败(seq=${seq})：未找到输入框`); return; }
     // 回复还在生成中，回车不会发送，避免误触
-    if (isGenerating()) return;
+    if (isGenerating()) { dlog(`回车兜底放弃(seq=${seq})：正在生成回复`); return; }
     // 内容已被用户改写/清空，放弃兜底发送
-    if (!contentMatches(expectedText)) return;
+    if (!contentMatches(expectedText)) { dlog(`回车兜底放弃(seq=${seq})：输入框内容已变化`); return; }
+    // 跨实例防重锁：别的标签页/实例已发过这条就不再发
+    if (seqAlreadySent(seq)) { dlog(`回车兜底放弃(seq=${seq})：该条消息已被其他实例发送（防重锁）`); return; }
+    markSeqSent(seq);
+    dlog(`执行回车兜底发送(seq=${seq})`);
     editor.focus();
     const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
     editor.dispatchEvent(new KeyboardEvent('keydown', opts));
@@ -258,23 +295,36 @@
   }
 
   // ---------- 点击发送（等按钮可点 + 回复生成完 + 有文件时等上传完成） ----------
-  // token：本次发送任务的标识，若期间又来新同步则作废；expectedText：脚本写入的文本；
-  // genDeadline：等待"上一条回复生成结束"的绝对截止时间，期间不消耗 retries
-  function clickSend(hasFiles, expectedText, token, retries = 60, genDeadline = Date.now() + 10 * 60 * 1000) {
+  // token：本次发送任务的标识，若期间又来新同步则作废；seq：广播序号，用于跨实例防重锁；
+  // expectedText：脚本写入的文本；genDeadline：等待"上一条回复生成结束"的绝对截止时间，
+  // 期间不消耗 retries；calm：发送条件需连续满足的确认次数计数
+  function clickSend(hasFiles, expectedText, token, seq, retries = 60, genDeadline = Date.now() + 10 * 60 * 1000, calm = 0) {
     // 已发送过此 token，放弃（避免重复点击）
     if (sentTokens.has(token)) return;
     // 有更新的发送任务产生，放弃本次（旧的兜底定时器不再误触发）
-    if (token !== sendToken) return;
+    if (token !== sendToken) { dlog(`放弃发送(seq=${seq})：已有更新的同步任务取代了它`); return; }
     // 首次进入本任务时记录基线：对话里此刻已有多少条同文本的用户消息
     if (!tokenBaselines.has(token)) tokenBaselines.set(token, countSentMessages(expectedText));
     // 最强信号：对话中新出现了这条用户消息 → 已发送成功，
     // 无论编辑器是否残留文本、按钮是什么状态，都绝不再点击
     if (countSentMessages(expectedText) > tokenBaselines.get(token)) {
       sentTokens.add(token);
+      markSeqSent(seq);
+      dlog(`确认发送成功(seq=${seq})：消息已出现在对话中，不再点击`);
       return;
     }
     // 编辑器内容已不是脚本写入的那段（用户清空或手动改写），放弃发送
-    if (!contentMatches(expectedText)) return;
+    if (!contentMatches(expectedText)) {
+      dlog(`放弃发送(seq=${seq})：输入框内容与同步文本不一致。` +
+        `期望="${normText(expectedText).slice(0, 40)}" 实际="${normText(getEditorText()).slice(0, 40)}"`);
+      return;
+    }
+    // 跨实例防重锁：同站点的其他标签页/实例已经发过这条消息就绝不再发
+    if (seqAlreadySent(seq)) {
+      sentTokens.add(token);
+      dlog(`放弃发送(seq=${seq})：该条消息已被本站点其他页面实例发送（防重锁）`);
+      return;
+    }
     const btn = adapter.findSend();
     const ready = btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
     // 连续对话：上一条回复还在流式输出时按钮其实是"停止"，
@@ -284,45 +334,68 @@
     // isStopButton 再查一次按钮本身：即使 stopSelectors 全部失配，
     // 也绝不把已切换成"停止"态的按钮当发送键点（点了会截断回答）
     if (ready && !generating && !isStopButton(btn) && (!hasFiles || !isUploading())) {
+      // 连续两次检测（间隔 250ms）都满足条件才真正点击，避开"生成刚结束/
+      // 按钮状态正在切换"的瞬间，防止点在过渡态上产生截断或误发
+      if (calm < 1) {
+        setTimeout(() => clickSend(hasFiles, expectedText, token, seq, retries, genDeadline, calm + 1), 250);
+        return;
+      }
       // 核心防重：标记已点击。此标记永不撤销 → 本任务后续任何定时器、
       // 任何校验逻辑都不可能再点第二次。曾经的"校验失败就撤销标记重试"
       // 正是重复发送的病根：消息其实已发出但编辑器残留文字/按钮状态误判，
       // 重试点击轻则截断回答（点中停止键）、重则同一问题问两遍。
       sentTokens.add(token);
+      markSeqSent(seq);
+      dlog(`点击发送按钮(seq=${seq})，文本="${normText(expectedText).slice(0, 40)}"`);
       btn.click();
       // 清理旧 token（保留最近 10 个，避免内存泄漏）
       if (sentTokens.size > 10) {
         const old = [...sentTokens].sort((a, b) => a - b)[0];
         sentTokens.delete(old);
         tokenBaselines.delete(old);
+        waitLogAt.delete(old);
       }
       // 点击后校验（轮询 5s）只用于提示，绝不自动重试点击。
       // 成功信号任一出现即静默结束：① 对话中新出现这条用户消息；
-      // ② 编辑器已清空；③ 检测到正在生成回复。全部落空仅在控制台告警，
+      // ② 编辑器已清空；③ 检测到正在生成回复。全部落空仅记日志告警，
       // 文字会留在输入框里，由用户自行决定是否手动发送。
       if ((expectedText || '').trim()) {
         const verifyUntil = Date.now() + 5000;
         const verify = () => {
           if (token !== sendToken) return;
-          if (countSentMessages(expectedText) > tokenBaselines.get(token) ||
-              !contentMatches(expectedText) || isGenerating()) return;
+          if (countSentMessages(expectedText) > tokenBaselines.get(token)) {
+            dlog(`发送成功(seq=${seq})：对话中已出现该消息`); return;
+          }
+          if (!contentMatches(expectedText)) {
+            dlog(`发送成功(seq=${seq})：输入框已清空/内容已变化`); return;
+          }
+          if (isGenerating()) {
+            dlog(`发送成功(seq=${seq})：已检测到正在生成回复`); return;
+          }
           if (Date.now() < verifyUntil) { setTimeout(verify, 250); return; }
-          console.warn('[dual-ai] 未检测到发送成功信号；为避免重复发送不会自动重试，若消息未发出请手动点击发送');
+          dlog(`警告(seq=${seq})：点击后未检测到任何发送成功信号；` +
+            '为避免重复发送不会自动重试，若消息未发出请手动点击发送');
         };
         setTimeout(verify, 250);
       }
       return;
     }
+    // 等待期间每 3 秒记一条状态日志（300ms 轮询全记会刷屏）
+    if (Date.now() - (waitLogAt.get(token) || 0) > 3000) {
+      waitLogAt.set(token, Date.now());
+      dlog(`等待发送条件(seq=${seq})：按钮就绪=${!!ready} 生成中=${generating} ` +
+        `停止态按钮=${isStopButton(btn)} 上传中=${hasFiles ? isUploading() : '无文件'} 剩余重试=${retries}`);
+    }
     // 等待生成结束期间不消耗重试次数（回答可能持续数分钟），但有总截止时间兜底
     if (generating && Date.now() < genDeadline) {
-      setTimeout(() => clickSend(hasFiles, expectedText, token, retries, genDeadline), 300);
+      setTimeout(() => clickSend(hasFiles, expectedText, token, seq, retries, genDeadline, 0), 300);
       return;
     }
     if (retries > 0) {
-      setTimeout(() => clickSend(hasFiles, expectedText, token, retries - 1, genDeadline), 300);
+      setTimeout(() => clickSend(hasFiles, expectedText, token, seq, retries - 1, genDeadline, 0), 300);
     } else {
-      console.warn('[dual-ai] 发送按钮不可用，改用回车兜底发送');
-      pressEnter(expectedText);
+      dlog(`发送按钮持续不可用(seq=${seq})，改用回车兜底发送`);
+      pressEnter(expectedText, seq);
     }
   }
 
@@ -356,19 +429,30 @@
   function applyPayload(p) {
     if (!p || p.seq === lastSeq) return;
     lastSeq = p.seq;
+    dlog(`收到广播 seq=${p.seq} 发送=${!!p.send} 新对话=${!!p.newChat} ` +
+      `文件=${(p.files || []).length} 文本="${normText(p.text).slice(0, 40)}"`);
 
     const run = () => {
       const files = (p.files || []).map(f => dataUrlToFile(f.data, f.name));
       if (files.length) pasteFiles(files);
-      if (p.text) setText(p.text);
+      if (p.text) {
+        const ok = setText(p.text);
+        dlog(ok ? '已写入文本到输入框' : '写入文本失败：未找到输入框');
+      }
       if (p.send) {
+        // 空内容的发送广播直接忽略（通常来自按住回车的连发），注意必须在
+        // ++sendToken 之前返回，否则空广播会把前一条正常消息的发送任务作废
+        if (!(p.text || '').trim() && !files.length) {
+          dlog(`忽略空内容的发送广播 seq=${p.seq}`);
+          return;
+        }
         // 作废之前可能仍在轮询的发送任务，并为本次分配新 token
         const token = ++sendToken;
         // 文件逐个粘贴（每个间隔 250ms），等全部注入后再点；
         // clickSend 内部还会轮询等上传完成（仅在有文件时），并校验内容/ token
         const delay = files.length ? 600 + files.length * 250 : 300;
         const hasFiles = files.length > 0;
-        setTimeout(() => clickSend(hasFiles, p.text || '', token), delay);
+        setTimeout(() => clickSend(hasFiles, p.text || '', token, p.seq), delay);
       }
     };
 
@@ -416,6 +500,10 @@
         <button id="dai-fill" style="flex:1;padding:2px 0;">同步填入</button>
         <button id="dai-send" style="flex:1;padding:2px 0;">同步发送</button>
         <button id="dai-new" style="flex:1;padding:2px 0;">新窗口发送</button>
+      </div>
+      <div style="display:flex;gap:0px;margin-top:2px;">
+        <button id="dai-log" style="flex:2;padding:2px 0;font-size:12px;">导出诊断日志</button>
+        <button id="dai-clearlog" style="flex:1;padding:2px 0;font-size:12px;">清空日志</button>
       </div>`;
     document.body.appendChild(panel);
 
@@ -488,14 +576,51 @@
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
+        // 按住回车会产生重复 keydown：第一次已清空输入框，后续重复事件
+        // 会广播出"空内容但要求发送"的指令，把前一条的发送任务作废掉
+        // （表现为两边填入了却不发送），必须整体忽略
+        if (e.repeat) return;
+        if (!ta.value.trim() && !pendingFiles.length) return;
         send(ta.value, pendingFiles, true, false);
         clear();
       }
     });
 
     panel.querySelector('#dai-fill').onclick = () => send(ta.value, pendingFiles, false, false);
-    panel.querySelector('#dai-send').onclick = () => { send(ta.value, pendingFiles, true, false); clear(); };
-    panel.querySelector('#dai-new').onclick  = () => { send(ta.value, pendingFiles, true, true);  clear(); };
+    panel.querySelector('#dai-send').onclick = () => {
+      if (!ta.value.trim() && !pendingFiles.length) return;
+      send(ta.value, pendingFiles, true, false); clear();
+    };
+    panel.querySelector('#dai-new').onclick  = () => {
+      if (!ta.value.trim() && !pendingFiles.length) return;
+      send(ta.value, pendingFiles, true, true);  clear();
+    };
+
+    // ---------- 诊断日志导出 ----------
+    // 合并两站日志按时间排序，复制到剪贴板并打印到控制台，
+    // 排查"没发送/重复发送"时把这份日志直接贴出来即可
+    panel.querySelector('#dai-log').onclick = () => {
+      let a = [], b = [];
+      try {
+        a = GM_getValue('dual_ai_logs_chatgpt', []) || [];
+        b = GM_getValue('dual_ai_logs_gemini', []) || [];
+      } catch (e) { /* ignore */ }
+      const text = [...a, ...b].sort().join('\n') || '(暂无日志)';
+      console.log('===== dual-ai 诊断日志 =====\n' + text);
+      const done = () => alert(`已导出 ${a.length + b.length} 条日志：已复制到剪贴板，并打印到控制台(F12)`);
+      const fail = () => alert('日志已打印到控制台(F12 查看)，剪贴板复制失败');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fail);
+      } else { fail(); }
+    };
+    panel.querySelector('#dai-clearlog').onclick = () => {
+      try {
+        GM_setValue('dual_ai_logs_chatgpt', []);
+        GM_setValue('dual_ai_logs_gemini', []);
+      } catch (e) { /* ignore */ }
+      logBuf = [];
+      alert('日志已清空');
+    };
 
     // ---------- 拖拽 ----------
     const head = panel.querySelector('#dai-head');
