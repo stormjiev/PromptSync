@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT + Gemini 双网页同步输入
 // @namespace    dual-ai-sync
-// @version      1.1
+// @version      1.2
 // @description  浮动小框输入/粘贴/拖拽多图多文件 → 回车 → ChatGPT 与 Gemini 两个网页自动填入，等上传完成后发送；单任务只点一次发送键、绝不自动重试，杜绝截断回答和重复发送
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9,6 +9,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addValueChangeListener
+// @grant        unsafeWindow
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -43,6 +44,62 @@
   function markSeqSent(seq) {
     try { GM_setValue(SENT_SEQ_KEY, seq); } catch (e) { /* ignore */ }
   }
+
+  // ---------- 网络层上传跟踪 ----------
+  // DOM 进度条选择器随站点改版极易失配（Gemini 已实际翻车：图片没传完就点了
+  // 发送），所以直接挂钩页面的 fetch/XHR，凡是发往上传类端点的 POST/PUT 请求
+  // 都计数：active>0 即上传未完成。这一信号与 DOM 结构完全解耦。
+  const uploadNet = { active: 0, started: 0, lastChangeAt: 0 };
+  // ChatGPT：/backend-api/files + Azure blob / oaiusercontent；Gemini：*/upload/*（push.clients6 等）
+  const UPLOAD_URL_RE = /upload|backend-api\/files|oaiusercontent|blob\.core\.windows|content-push/i;
+  function trackUploadStart(url, method) {
+    if (!/^(post|put)$/i.test(method || '')) return false;
+    if (!UPLOAD_URL_RE.test(url || '')) return false;
+    uploadNet.active++;
+    uploadNet.started++;
+    uploadNet.lastChangeAt = Date.now();
+    // 分片上传会连发多个请求，只在 0→1 时记日志避免刷屏
+    if (uploadNet.active === 1) dlog(`检测到上传请求开始：${method} ${String(url).slice(0, 80)}`);
+    return true;
+  }
+  function trackUploadEnd() {
+    uploadNet.active = Math.max(0, uploadNet.active - 1);
+    uploadNet.lastChangeAt = Date.now();
+    if (uploadNet.active === 0) dlog('上传请求全部结束（进入静默确认期）');
+  }
+  (function hookNetwork() {
+    const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+    try {
+      const origFetch = W.fetch;
+      W.fetch = function (input, init) {
+        let url = '', method = 'GET';
+        try {
+          url = typeof input === 'string' ? input : (input && input.url) || '';
+          method = (init && init.method) || (input && input.method) || 'GET';
+        } catch (e) { /* ignore */ }
+        const tracked = trackUploadStart(url, method);
+        const p = origFetch.apply(this, arguments);
+        if (tracked && p && p.then) p.then(trackUploadEnd, trackUploadEnd);
+        return p;
+      };
+      const XHR = W.XMLHttpRequest;
+      const origOpen = XHR.prototype.open;
+      const origSend = XHR.prototype.send;
+      XHR.prototype.open = function (method, url) {
+        this.__daiReq = { method, url: String(url) };
+        return origOpen.apply(this, arguments);
+      };
+      XHR.prototype.send = function () {
+        const m = this.__daiReq || {};
+        if (trackUploadStart(m.url, m.method)) {
+          this.addEventListener('loadend', trackUploadEnd, { once: true });
+        }
+        return origSend.apply(this, arguments);
+      };
+    } catch (e) {
+      dlog('网络上传钩子安装失败（仅靠 DOM 检测兜底）：' + e.message);
+    }
+  })();
 
   // ---------- 站点适配：编辑器 & 发送按钮 ----------
   const ADAPTERS = {
@@ -83,8 +140,23 @@
         'mat-progress-bar',
         '[role="progressbar"]',
         '.mat-mdc-progress-bar',
+        'mat-spinner',
+        'mat-progress-spinner',
+        '.mat-mdc-progress-spinner',
         '.uploading',
+        '.upload-progress',
       ],
+      // Gemini 没有 <form>，必须显式圈定包含附件预览区的 composer 容器；
+      // 否则上传检测范围回退到编辑器内壳，进度条永远检测不到（图片没传完就发送）
+      findUploadScope: () => {
+        const direct = document.querySelector(
+          'input-area-v2, input-area, .input-area-container, .input-area');
+        if (direct) return direct;
+        // 兜底：站点改版换了容器名时，从编辑器向上爬几层圈住附件预览区
+        let el = document.querySelector('rich-textarea');
+        for (let i = 0; el && el.parentElement && i < 4; i++) el = el.parentElement;
+        return el;
+      },
       // 正在生成回复的指示：发送按钮切换为停止状态
       stopSelectors: [
         'button.send-button.stop',
@@ -108,6 +180,33 @@
   const tokenBaselines = new Map();
   // token → 上次输出"等待发送条件"日志的时间，限频避免 300ms 轮询刷屏
   const waitLogAt = new Map();
+  // token → 任务创建时刻 / 创建时已发生过的上传请求总数（用于判断"本任务的
+  // 上传是否已经开始过"，区别于页面历史上别的上传）
+  const tokenStartAt = new Map();
+  const tokenUpBase = new Map();
+  // 已为该 token 记过"未观测到上传、超时放行"警告，避免重复刷日志
+  const graceWarned = new Set();
+
+  // ---------- 附带文件时，上传是否已确认完成 ----------
+  // 三道闸：① 网络层无进行中的上传请求；② DOM 无上传指示器；③ 若观测到过
+  // 上传请求，要求结束后再静默 1.2s（分片/收尾请求之间有间隙，避免点在间隙上）。
+  // 若 8 秒内完全没观测到上传活动（站点走了挂钩不到的通道），记警告后放行，
+  // 避免永远卡住不发。
+  function uploadsSettled(token, seq) {
+    if (uploadNet.active > 0) return false;
+    if (isUploading()) return false;
+    const seen = uploadNet.started - (tokenUpBase.get(token) || 0);
+    if (seen > 0) return Date.now() - uploadNet.lastChangeAt > 1200;
+    if (Date.now() - (tokenStartAt.get(token) || 0) > 8000) {
+      if (!graceWarned.has(token)) {
+        graceWarned.add(token);
+        dlog(`警告(seq=${seq})：附带文件但 8 秒内未观测到任何上传活动` +
+          '（网络钩子和 DOM 指示器都没捕获到），超时放行发送');
+      }
+      return true;
+    }
+    return false;
+  }
 
   // ---------- 取消所有待执行的自动发送任务 ----------
   // 一旦用户手动发送/手动改写输入，立刻作废脚本排队中的 clickSend 轮询，
@@ -263,16 +362,25 @@
     }
   }
 
-  // ---------- 是否仍在上传 ----------
-  // 仅在 composer/form 范围内检测，避免页面其他位置常驻的 spinner / 进度条造成误判
-  function isUploading() {
-    const sels = adapter.uploadingSelectors || [];
-    const scope =
+  // ---------- 是否仍在上传（DOM 指示器） ----------
+  // 仅在 composer 范围内检测，避免页面其他位置常驻的 spinner / 进度条造成误判。
+  // 范围优先用适配器显式指定的容器（Gemini 没有 form，靠 closest('form')
+  // 会缩到编辑器内壳，上传进度条永远检测不到）
+  function uploadScope() {
+    return (adapter.findUploadScope && adapter.findUploadScope()) ||
       adapter.findSend()?.closest('form') ||
       adapter.findEditor()?.closest('form') ||
       adapter.findEditor()?.parentElement ||
       document;
-    return sels.some(s => scope.querySelector(s));
+  }
+  // 返回匹配到的指示器选择器（用于日志定位），没有则返回 null
+  function uploadIndicator() {
+    const sels = adapter.uploadingSelectors || [];
+    const scope = uploadScope();
+    return sels.find(s => scope.querySelector(s)) || null;
+  }
+  function isUploading() {
+    return !!uploadIndicator();
   }
 
   // ---------- 兜底：直接在编辑器上按回车发送 ----------
@@ -304,7 +412,19 @@
     // 有更新的发送任务产生，放弃本次（旧的兜底定时器不再误触发）
     if (token !== sendToken) { dlog(`放弃发送(seq=${seq})：已有更新的同步任务取代了它`); return; }
     // 首次进入本任务时记录基线：对话里此刻已有多少条同文本的用户消息
-    if (!tokenBaselines.has(token)) tokenBaselines.set(token, countSentMessages(expectedText));
+    if (!tokenBaselines.has(token)) {
+      tokenBaselines.set(token, countSentMessages(expectedText));
+      if (!tokenStartAt.has(token)) tokenStartAt.set(token, Date.now());
+      // 带文件任务首次进入时记录上传检测环境，便于事后从日志定位
+      // "为什么没等上传"是范围不对还是选择器失配
+      if (hasFiles) {
+        const scope = uploadScope();
+        const scopeDesc = scope === document ? 'document'
+          : `<${(scope.tagName || '?').toLowerCase()}${scope.className ? ' class="' + String(scope.className).slice(0, 60) + '"' : ''}>`;
+        dlog(`上传检测环境(seq=${seq})：范围=${scopeDesc} DOM指示器=${uploadIndicator() || '无'} ` +
+          `网络上传(进行中=${uploadNet.active} 本任务已见=${uploadNet.started - (tokenUpBase.get(token) || 0)})`);
+      }
+    }
     // 最强信号：对话中新出现了这条用户消息 → 已发送成功，
     // 无论编辑器是否残留文本、按钮是什么状态，都绝不再点击
     if (countSentMessages(expectedText) > tokenBaselines.get(token)) {
@@ -333,7 +453,7 @@
     // 只有真正附带文件时才等待上传；纯文本不受上传指示器影响
     // isStopButton 再查一次按钮本身：即使 stopSelectors 全部失配，
     // 也绝不把已切换成"停止"态的按钮当发送键点（点了会截断回答）
-    if (ready && !generating && !isStopButton(btn) && (!hasFiles || !isUploading())) {
+    if (ready && !generating && !isStopButton(btn) && (!hasFiles || uploadsSettled(token, seq))) {
       // 连续两次检测（间隔 250ms）都满足条件才真正点击，避开"生成刚结束/
       // 按钮状态正在切换"的瞬间，防止点在过渡态上产生截断或误发
       if (calm < 1) {
@@ -354,6 +474,9 @@
         sentTokens.delete(old);
         tokenBaselines.delete(old);
         waitLogAt.delete(old);
+        tokenStartAt.delete(old);
+        tokenUpBase.delete(old);
+        graceWarned.delete(old);
       }
       // 点击后校验（轮询 5s）只用于提示，绝不自动重试点击。
       // 成功信号任一出现即静默结束：① 对话中新出现这条用户消息；
@@ -383,11 +506,22 @@
     // 等待期间每 3 秒记一条状态日志（300ms 轮询全记会刷屏）
     if (Date.now() - (waitLogAt.get(token) || 0) > 3000) {
       waitLogAt.set(token, Date.now());
+      let upDesc = '无文件';
+      if (hasFiles) {
+        const ind = uploadIndicator();
+        const seen = uploadNet.started - (tokenUpBase.get(token) || 0);
+        upDesc = `${!!ind || uploadNet.active > 0}[DOM指示=${ind || '无'} ` +
+          `网络进行中=${uploadNet.active} 本任务已见=${seen} ` +
+          `距上次活动=${uploadNet.lastChangeAt ? Date.now() - uploadNet.lastChangeAt + 'ms' : '从未'}]`;
+      }
       dlog(`等待发送条件(seq=${seq})：按钮就绪=${!!ready} 生成中=${generating} ` +
-        `停止态按钮=${isStopButton(btn)} 上传中=${hasFiles ? isUploading() : '无文件'} 剩余重试=${retries}`);
+        `停止态按钮=${isStopButton(btn)} 上传中=${upDesc} 剩余重试=${retries}`);
     }
-    // 等待生成结束期间不消耗重试次数（回答可能持续数分钟），但有总截止时间兜底
-    if (generating && Date.now() < genDeadline) {
+    // 等待生成结束期间不消耗重试次数（回答可能持续数分钟），但有总截止时间兜底；
+    // 上传明确进行中时同理：大文件上传可能超过 18s，耗尽重试会触发回车兜底
+    // 提前发送，重蹈"图片没传完文字先发出去"的覆辙
+    const uploadBusy = hasFiles && (uploadNet.active > 0 || isUploading());
+    if ((generating || uploadBusy) && Date.now() < genDeadline) {
       setTimeout(() => clickSend(hasFiles, expectedText, token, seq, retries, genDeadline, 0), 300);
       return;
     }
@@ -434,6 +568,8 @@
 
     const run = () => {
       const files = (p.files || []).map(f => dataUrlToFile(f.data, f.name));
+      // 必须在粘贴前取基线：站点的粘贴处理可能同步发起上传请求
+      const upBase = uploadNet.started;
       if (files.length) pasteFiles(files);
       if (p.text) {
         const ok = setText(p.text);
@@ -448,6 +584,8 @@
         }
         // 作废之前可能仍在轮询的发送任务，并为本次分配新 token
         const token = ++sendToken;
+        tokenStartAt.set(token, Date.now());
+        tokenUpBase.set(token, upBase);
         // 文件逐个粘贴（每个间隔 250ms），等全部注入后再点；
         // clickSend 内部还会轮询等上传完成（仅在有文件时），并校验内容/ token
         const delay = files.length ? 600 + files.length * 250 : 300;
