@@ -235,15 +235,33 @@
     }
 
     // ---------- 注入图片/文件（逐个重建 paste 事件） ----------
+    // Gemini 在忙于处理上一张图片时会吞掉紧随其后的 paste（固定 250ms 间隔太短，
+    // 导致第二张图根本没触发上传）。因此下一张必须等到上一张的上传被网络层确认
+    // 开始（uploadNet.started 自增）或超时后再粘贴，确保站点已就绪。
     function pasteFiles(files, i) {
       i = i || 0;
       const editor = findEditor();
       if (!editor || i >= files.length) return;
       editor.focus();
+      const startedBefore = uploadNet.started;
       const dt = new DataTransfer();
       dt.items.add(files[i]);
       editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-      if (i + 1 < files.length) setTimeout(() => pasteFiles(files, i + 1), 250);
+      dlog(`注入文件 ${i + 1}/${files.length}：${files[i].name || 'file'}`);
+      if (i + 1 >= files.length) return;
+
+      const next = () => pasteFiles(files, i + 1);
+      const deadline = Date.now() + 4000; // 网络层未观测到上传时的兜底放行
+      const waitThenNext = () => {
+        const seen = uploadNet.started > startedBefore;
+        if (seen || Date.now() > deadline) {
+          if (!seen) dlog(`注入文件：未观测到第 ${i + 1} 张上传，超时后继续下一张`);
+          setTimeout(next, 300); // 上传已起飞，留点缓冲再粘下一张
+          return;
+        }
+        setTimeout(waitThenNext, 150);
+      };
+      setTimeout(waitThenNext, 250);
     }
 
     // ---------- 上传检测范围与指示器 ----------
