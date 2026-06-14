@@ -26,12 +26,22 @@
 
 > 其它网页 AI 可在设置页「➕ 新增站点」自助接入。
 
-## 📦 安装（开发者模式加载）
+## 📦 安装
 
-1. 下载本仓库（或 Release）里的 `extension/` 目录
-2. 浏览器打开 `chrome://extensions`，右上角开启 **开发者模式**
-3. 点 **加载已解压的扩展程序**，选中 `extension/` 目录
-4. 登录着打开任一支持的 AI 网站，右下角即出现同步面板 ✅
+> 暂未上架应用商店，先用「开发者模式加载」。两种取包方式任选其一。
+
+**方式 A · 下载打包好的 zip（推荐，最省事）**
+
+1. 到 [**Releases**](https://github.com/stormjiev/PromptSync/releases/latest) 下载 `promptsync-extension-vX.Y.Z.zip`
+2. 解压得到一个文件夹
+3. 浏览器打开 `chrome://extensions` → 右上角开 **开发者模式** → 点 **加载已解压的扩展程序** → 选中刚解压的文件夹
+
+**方式 B · 用源码**
+
+1. `git clone https://github.com/stormjiev/PromptSync.git`（或绿色 **Code → Download ZIP** 后解压）
+2. 同上加载，目录选仓库里的 `extension/`
+
+装好后，登录着打开任一支持的 AI 网站，右下角即出现同步面板 ✅
 
 > 适用于 Chrome / Edge / Brave 等 Chromium 内核浏览器。
 
