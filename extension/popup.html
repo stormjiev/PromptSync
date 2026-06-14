@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: -apple-system, "PingFang SC", system-ui, sans-serif; width: 240px; margin: 0; padding: 12px; color: #1a1a1a; }
+    h2 { font-size: 14px; margin: 0 0 8px; }
+    .site { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+    .site input { transform: scale(1.1); }
+    .foot { margin-top: 10px; border-top: 1px solid #eee; padding-top: 8px; }
+    button { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>同步目标站点</h2>
+  <div id="list"></div>
+  <div class="foot">
+    <button id="opt">⚙ 打开完整设置</button>
+  </div>
+  <script src="src/adapters.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

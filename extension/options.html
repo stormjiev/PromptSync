@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>PromptSync 设置</title>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", system-ui, sans-serif; max-width: 920px; margin: 24px auto; padding: 0 16px; color: #1a1a1a; }
+    h1 { font-size: 20px; }
+    p.intro { color: #555; font-size: 13px; line-height: 1.6; }
+    .site { border: 1px solid #ddd; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; background: #fafafa; }
+    .site-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .site-head input[type=text] { font-size: 15px; font-weight: 600; border: none; background: transparent; flex: 1; }
+    .site-head .badge { font-size: 11px; color: #888; background: #eee; border-radius: 6px; padding: 2px 6px; }
+    .grid { display: grid; grid-template-columns: 130px 1fr; gap: 6px 10px; align-items: center; }
+    .grid label { font-size: 12px; color: #555; }
+    .grid input { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 6px; }
+    .row-actions { margin-top: 8px; display: flex; gap: 8px; }
+    button { padding: 6px 12px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 13px; }
+    button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    button.danger { color: #c00; border-color: #e0a0a0; }
+    .toolbar { position: sticky; top: 0; background: #fff; padding: 12px 0; display: flex; gap: 10px; z-index: 5; border-bottom: 1px solid #eee; }
+    .hint { font-size: 11px; color: #999; }
+    #status { color: #0a0; font-size: 13px; align-self: center; }
+  </style>
+</head>
+<body>
+  <h1>PromptSync 设置</h1>
+  <p class="intro">
+    勾选要参与同步的网页 AI；每个站点的选择器都可编辑——网站改版导致"不发送/找不到输入框"时，按 F12 找到对应元素改这里即可，无需改代码。<br />
+    新增其它网页 AI：点"➕ 新增站点"，填好域名与选择器并授权访问该域名即可（自定义站点首次需在浏览器弹窗中授权）。
+  </p>
+  <div class="toolbar">
+    <button class="primary" id="save">保存</button>
+    <button id="add">➕ 新增站点</button>
+    <button class="danger" id="reset">恢复默认</button>
+    <span id="status"></span>
+  </div>
+  <div id="sites"></div>
+
+  <template id="site-tpl">
+    <div class="site">
+      <div class="site-head">
+        <input type="checkbox" class="f-enabled" title="参与同步" />
+        <input type="text" class="f-name" placeholder="站点名称" />
+        <span class="badge"></span>
+        <button class="danger del">删除</button>
+      </div>
+      <div class="grid">
+        <label>域名关键字</label><input type="text" class="f-hosts" placeholder="多个用英文逗号分隔，如 chat.deepseek.com" />
+        <label>输入框</label><input type="text" class="f-editor" />
+        <label>发送按钮</label><input type="text" class="f-send" />
+        <label>用户消息气泡</label><input type="text" class="f-userMsg" />
+        <label>上传中指示器</label><input type="text" class="f-uploading" />
+        <label>上传范围容器</label><input type="text" class="f-uploadScope" />
+        <label>停止按钮</label><input type="text" class="f-stop" />
+        <label>新建对话按钮</label><input type="text" class="f-newChat" />
+        <label>新对话快捷键</label><input type="text" class="f-newChatKey" placeholder="如 meta+shift+o（可空）" />
+      </div>
+      <div class="hint">选择器留空＝沿用内置默认值（自定义站点除外）。多个选择器用英文逗号分隔，按顺序取首个命中。</div>
+    </div>
+  </template>
+
+  <script src="src/adapters.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
