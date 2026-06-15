@@ -385,8 +385,7 @@
         return;
       }
       if (!contentMatches(expectedText)) {
-        dlog(`放弃发送(seq=${seq})：输入框内容与同步文本不一致。` +
-          `期望="${normText(expectedText).slice(0, 40)}" 实际="${normText(getEditorText()).slice(0, 40)}"`);
+        dlog(`放弃发送(seq=${seq})：输入框内容与同步文本不一致`);
         return;
       }
       if (seqAlreadySent(seq)) {
@@ -403,7 +402,7 @@
           return;
         }
         sentTokens.add(token); markSeqSent(seq);
-        dlog(`点击发送按钮(seq=${seq})，文本="${normText(expectedText).slice(0, 40)}"`);
+        dlog(`点击发送按钮(seq=${seq})`);
         btn.click();
         if (sentTokens.size > 10) {
           const old = [...sentTokens].sort((a, b) => a - b)[0];
@@ -564,7 +563,7 @@
       lastSeq = p.seq;
       // 多目标过滤：targets 非空且不含本站则忽略（但已更新 lastSeq 去重）
       if (Array.isArray(p.targets) && p.targets.length && !p.targets.includes(SITE)) return;
-      dlog(`收到广播 seq=${p.seq} 发送=${!!p.send} 新对话=${!!p.newChat} 文件=${(p.files || []).length} 文本="${normText(p.text).slice(0, 40)}"`);
+      dlog(`收到广播 seq=${p.seq} 发送=${!!p.send} 新对话=${!!p.newChat} 文件=${(p.files || []).length}`);
 
       const run = () => {
         const files = (p.files || []).map((f) => dataUrlToFile(f.data, f.name));
@@ -590,7 +589,14 @@
     // ---------- 广播 ----------
     function broadcast(payload) {
       if (!extAlive()) { alert('PromptSync 已重新加载，请刷新本页面后再使用'); return; }
-      chrome.storage.local.set({ dual_ai_prompt: payload });
+      chrome.storage.local.set({ dual_ai_prompt: payload }, () => {
+        // 广播需要短暂经过本地存储；投递后清除，避免聊天内容长期留存。
+        setTimeout(() => {
+          chrome.storage.local.get('dual_ai_prompt', (o) => {
+            if (o.dual_ai_prompt?.seq === payload.seq) chrome.storage.local.remove('dual_ai_prompt');
+          });
+        }, 15000);
+      });
       applyPayload(payload); // 本页也执行
     }
     function send(text, files, doSend, newChat, targets) {

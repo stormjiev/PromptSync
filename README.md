@@ -4,6 +4,8 @@
 
 ![演示：输入一次，多家 AI 同时回答](assets/demo.webp)
 
+[查看高清无声 MP4 演示（约 6.6 MB）](demo-raw.mp4)
+
 一个浮动小窗，输入 / 粘贴 / 拖拽（支持多图多文件），**回车即同步发送**到你勾选的多个网页 AI；自动等图片上传完再发、单次发送绝不重复。
 
 适合：同一个问题，想横向对比多家大模型怎么答 —— 不用再一家一家复制粘贴。
@@ -25,6 +27,11 @@
 **ChatGPT · Gemini · DeepSeek · 通义千问（Qwen）**
 
 > 其它网页 AI 可在设置页「➕ 新增站点」自助接入。
+
+## 🔒 隐私与权限
+
+> **PromptSync 无后端、无账号系统、无统计或埋点，不收集或上传你的聊天内容。**
+>
 
 ## 📦 安装
 
@@ -73,4 +80,4 @@
 
 ---
 
-> 想了解实现细节见 [`extension/README.md`](extension/README.md)。原 Tampermonkey 脚本版保留在 [`dual-ai-sync.user.js`](dual-ai-sync.user.js)。
+> 想了解实现细节见 [`extension/README.md`](extension/README.md)。原 Tampermonkey 脚本版保留在 [`dual-ai-sync.user.js`](dual-ai-sync.user.js)。建议与问题可在 [GitHub Issues](https://github.com/stormjiev/PromptSync/issues) 留言。

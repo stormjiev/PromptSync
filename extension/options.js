@@ -128,7 +128,7 @@ document.getElementById('add').onclick = () => {
     values: { name: '', editor: 'div[contenteditable="true"], textarea', send: 'button[type="submit"], button[aria-label*="Send" i]', userMsg: '', uploading: '[role="progressbar"], [class*="loading"]', uploadScope: '', stop: '[class*="stop"]', newChat: '', newChatKey: '' },
     defaults: FIELDS.reduce((m, f) => { m[f] = ''; return m; }, {}),
   });
-  window.scrollTo(0, document.body.scrollHeight);
+  sitesEl.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 document.getElementById('reset').onclick = () => {

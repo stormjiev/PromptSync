@@ -22,6 +22,12 @@
     .toolbar { position: sticky; top: 0; background: #fff; padding: 12px 0; display: flex; gap: 10px; z-index: 5; border-bottom: 1px solid #eee; }
     .hint { font-size: 11px; color: #999; }
     #status { color: #0a0; font-size: 13px; align-self: center; }
+    .about { margin: 28px 0 40px; padding: 18px; border: 1px solid #dbe7f7; border-radius: 10px; background: #f7faff; }
+    .about h2 { margin: 0 0 8px; font-size: 16px; }
+    .about p { margin: 6px 0; color: #555; font-size: 13px; line-height: 1.6; }
+    .about-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .about-links a { padding: 6px 10px; border: 1px solid #b9cce8; border-radius: 8px; color: #1769c2; background: #fff; font-size: 13px; text-decoration: none; }
+    .about-links a:hover { background: #edf5ff; }
   </style>
 </head>
 <body>
@@ -62,6 +68,17 @@
       <div class="hint">选择器留空＝沿用内置默认值（自定义站点除外）。多个选择器用英文逗号分隔，按顺序取首个命中。</div>
     </div>
   </template>
+
+  <section class="about" aria-labelledby="about-title">
+    <h2 id="about-title">关于 PromptSync</h2>
+    <p>PromptSync 无后端、无统计或埋点，不收集聊天内容。同步任务仅在浏览器本地处理，并直接发送到你勾选的 AI 网站。</p>
+    <p>作者主页使用 GitHub Profile，项目建议与问题统一在 GitHub Issues 留言，方便公开跟踪和后续维护。</p>
+    <div class="about-links">
+      <a href="https://github.com/stormjiev" target="_blank" rel="noopener noreferrer">作者主页</a>
+      <a href="https://github.com/stormjiev/PromptSync" target="_blank" rel="noopener noreferrer">项目主页</a>
+      <a href="https://github.com/stormjiev/PromptSync/issues/new" target="_blank" rel="noopener noreferrer">建议反馈</a>
+    </div>
+  </section>
 
   <script src="src/adapters.js"></script>
   <script src="options.js"></script>
