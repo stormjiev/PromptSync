@@ -489,6 +489,19 @@
       if (typeof el.click === 'function') el.click();
     }
 
+    // 自定义元素/列表项容器（如 Gemini 的 <gem-nav-list-item>）自身没有点击处理器，
+    // 真正响应点击的是它内部的 a / button / [role=button] / Material 列表项。
+    // 直接点壳子 → 没反应（本次 bug：新会话没开成，消息发进了当前对话）。下钻到内层再点。
+    function innerClickable(el) {
+      if (!el) return el;
+      const sel = 'a[href], button, [role="button"], .mat-mdc-list-item, [jsaction*="click" i]';
+      try {
+        if (el.matches && el.matches(sel)) return el;
+        const hit = [...el.querySelectorAll(sel)].find((c) => isVisible(c));
+        return hit || el;
+      } catch (e) { return el; }
+    }
+
     function openNewChat() {
       let btn = qsFirst(adapter.newChat);
       let how = btn ? `CSS命中(${adapter.newChat})` : `CSS未命中(${adapter.newChat || '空'})`;
@@ -511,8 +524,10 @@
         } catch (e) { how += ' | 文字匹配异常:' + e.message; }
       }
       if (btn) {
-        dlog(`openNewChat: ${how} → 点击 ${descEl(btn)}`);
-        realClick(btn);
+        const target = innerClickable(btn);
+        if (target !== btn) how += ` | 下钻到内层可点元素`;
+        dlog(`openNewChat: ${how} → 点击 ${descEl(target)}`);
+        realClick(target);
         return;
       }
       const key = (adapter.newChatKey || '').toLowerCase();
