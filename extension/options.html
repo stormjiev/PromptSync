@@ -11,6 +11,7 @@
     .site-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .site-head input[type=text] { font-size: 15px; font-weight: 600; border: none; background: transparent; flex: 1; }
     .site-head .badge { font-size: 11px; color: #888; background: #eee; border-radius: 6px; padding: 2px 6px; }
+    .site-head .sw { font-size: 12px; color: #555; display: flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
     .grid { display: grid; grid-template-columns: 130px 1fr; gap: 6px 10px; align-items: center; }
     .grid label { font-size: 12px; color: #555; }
     .grid input { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 6px; }
@@ -40,9 +41,11 @@
   <template id="site-tpl">
     <div class="site">
       <div class="site-head">
-        <input type="checkbox" class="f-enabled" title="参与同步" />
+        <label class="sw" title="参与同步收发"><input type="checkbox" class="f-enabled" />同步</label>
         <input type="text" class="f-name" placeholder="站点名称" />
         <span class="badge"></span>
+        <label class="sw" title="是否在该站点页面显示浮框（关掉仍在后台同步）"><input type="checkbox" class="f-showPanel" />浮框</label>
+        <label class="sw" title="浮框默认折叠为标题条"><input type="checkbox" class="f-minimized" />最小化</label>
         <button class="danger del">删除</button>
       </div>
       <div class="grid">

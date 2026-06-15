@@ -3,16 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <style>
-    body { font-family: -apple-system, "PingFang SC", system-ui, sans-serif; width: 240px; margin: 0; padding: 12px; color: #1a1a1a; }
-    h2 { font-size: 14px; margin: 0 0 8px; }
-    .site { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
-    .site input { transform: scale(1.1); }
+    body { font-family: -apple-system, "PingFang SC", system-ui, sans-serif; width: 288px; margin: 0; padding: 12px; color: #1a1a1a; }
+    h2 { font-size: 14px; margin: 0 0 2px; }
+    .hint { font-size: 11px; color: #888; margin: 0 0 8px; }
+    .head { display: flex; align-items: center; font-size: 11px; color: #888; padding: 2px 0; border-bottom: 1px solid #eee; }
+    .head .name { flex: 1; }
+    .head .col { width: 48px; text-align: center; }
+    .site { display: flex; align-items: center; padding: 6px 0; font-size: 13px; }
+    .site .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .site .tg { width: 48px; display: flex; justify-content: center; }
+    .site input { transform: scale(1.15); cursor: pointer; }
     .foot { margin-top: 10px; border-top: 1px solid #eee; padding-top: 8px; }
     button { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 13px; }
   </style>
 </head>
 <body>
   <h2>同步目标站点</h2>
+  <p class="hint">同步=参与发送 · 浮框=该页是否显示输入框</p>
+  <div class="head"><span class="name">站点</span><span class="col">同步</span><span class="col">浮框</span></div>
   <div id="list"></div>
   <div class="foot">
     <button id="opt">⚙ 打开完整设置</button>

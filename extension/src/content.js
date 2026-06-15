@@ -14,7 +14,8 @@
     'presets=', (window.DAI_PRESETS || []).length);
 
   // 先读配置，确定本页对应哪个站点适配器，再决定是否启动
-  chrome.storage.local.get(['dai_config'], (o) => init(o.dai_config));
+  // dai_targets：浮框里"同步发往哪些站点"的勾选状态（跨刷新/跨标签持久化）
+  chrome.storage.local.get(['dai_config', 'dai_targets'], (o) => init(o.dai_config, o.dai_targets));
 
   function buildSites(config) {
     const overrides = (config && config.sites) || {};
@@ -32,8 +33,11 @@
     return Object.values(byId);
   }
 
-  function init(config) {
-    let sites = buildSites(config);
+  function init(config, savedTargets) {
+    let cfg = config || { version: 1, sites: {} };
+    // 目标勾选状态：{ siteId: bool }。缺省（不在表里）= 勾选。
+    let targetState = (savedTargets && typeof savedTargets === 'object') ? savedTargets : {};
+    let sites = buildSites(cfg);
     let adapter = window.DAI_matchSite(sites, location.hostname);
     console.log('[PromptSync] init: adapter =', adapter && adapter.id, '| sites =', sites.map((s) => s.id + (s.enabled === false ? '(off)' : '')).join(','));
     if (!adapter) return; // 本页不是已启用的 AI 站点
@@ -135,14 +139,35 @@
       if (changes.dual_ai_prompt) {
         applyPayload(changes.dual_ai_prompt.newValue);
       }
+      if (changes.dai_targets) {
+        // 另一个标签页改了目标勾选：同步到本页浮框
+        targetState = changes.dai_targets.newValue || {};
+        syncTargets();
+      }
       if (changes.dai_config) {
-        // 站点选择器被实时编辑：重建适配器即时生效（无需刷新页面）
-        sites = buildSites(changes.dai_config.newValue);
+        // 站点选择器/显隐被实时编辑：重建适配器即时生效（无需刷新页面）
+        cfg = changes.dai_config.newValue || { version: 1, sites: {} };
+        sites = buildSites(cfg);
         const next = window.DAI_matchSite(sites, location.hostname);
-        if (next) adapter = next;
-        rebuildTargets();
+        if (next) {
+          adapter = next;
+          rebuildTargets();
+          ensurePanel();
+          applyMinimize();
+        } else if (panelEl) {
+          // 本站被整体停用：连浮框一起撤掉
+          panelEl.remove(); panelEl = null;
+          rebuildTargets = () => {}; syncTargets = () => {}; applyMinimize = () => {};
+        }
       }
     });
+
+    // 写回单个站点的开关到 dai_config（显隐 / 启停）
+    function setSiteFlag(id, key, val) {
+      if (!cfg.sites) cfg.sites = {};
+      cfg.sites[id] = Object.assign({}, cfg.sites[id], { [key]: val });
+      try { chrome.storage.local.set({ dai_config: cfg }); } catch (e) { /* 上下文失联 */ }
+    }
 
     // ---------- 元素是否真实可见 ----------
     function isVisible(el) {
@@ -557,9 +582,23 @@
       broadcast({ seq: Date.now(), text, files: files || [], send: doSend, newChat: !!newChat, targets: targets || [] });
     }
 
-    // ---------- 浮动面板（在每个已启用站点都显示，任意页输入即多边同步） ----------
+    // ---------- 浮动面板（可按站点单独显隐；隐藏后本页仍参与同步） ----------
     let rebuildTargets = () => {};
-    createPanel();
+    let syncTargets = () => {};
+    let applyMinimize = () => {};
+    let panelEl = null;
+    ensurePanel();
+
+    // 按 adapter.showPanel 决定建/拆浮框（默认显示）
+    function ensurePanel() {
+      const show = adapter.showPanel !== false;
+      if (show && !panelEl) {
+        createPanel();
+      } else if (!show && panelEl) {
+        panelEl.remove(); panelEl = null;
+        rebuildTargets = () => {}; syncTargets = () => {}; applyMinimize = () => {};
+      }
+    }
 
     function createPanel() {
       const panel = document.createElement('div');
@@ -576,6 +615,7 @@
           <span style="display:flex;gap:8px;">
             <span id="dai-cfg" title="设置" style="cursor:pointer;">⚙</span>
             <span id="dai-min" title="收起" style="cursor:pointer;">—</span>
+            <span id="dai-hide" title="在本页隐藏浮框（可在扩展弹窗里重新打开）" style="cursor:pointer;">✕</span>
           </span>
         </div>
         <div id="dai-body">
@@ -594,6 +634,7 @@
           </div>
         </div>`;
       document.body.appendChild(panel);
+      panelEl = panel;
 
       const ta = panel.querySelector('#dai-text');
       const fileList = panel.querySelector('#dai-files');
@@ -601,22 +642,30 @@
       const body = panel.querySelector('#dai-body');
       let pendingFiles = [];
 
-      // 目标站点勾选框：列出所有已启用站点，默认全选
+      // 勾选某站点为目标（缺省视为勾选）
+      const isTargetOn = (id) => !(id in targetState) || targetState[id] !== false;
+      // 目标站点勾选框：列出所有已启用站点，勾选状态来自持久化的 targetState
       rebuildTargets = () => {
         const enabled = sites.filter((s) => s.enabled !== false);
-        const prev = {};
-        targetsBox.querySelectorAll('input[type=checkbox]').forEach((c) => { prev[c.value] = c.checked; });
         targetsBox.innerHTML = '';
         enabled.forEach((s) => {
           const lbl = document.createElement('label');
           lbl.style.cssText = 'display:flex;align-items:center;gap:3px;cursor:pointer;';
           const cb = document.createElement('input');
           cb.type = 'checkbox'; cb.value = s.id;
-          cb.checked = s.id in prev ? prev[s.id] : true;
+          cb.checked = isTargetOn(s.id);
+          cb.onchange = () => {
+            targetState[s.id] = cb.checked;
+            try { chrome.storage.local.set({ dai_targets: targetState }); } catch (e) { /* 上下文失联 */ }
+          };
           lbl.appendChild(cb);
           lbl.appendChild(document.createTextNode(s.name));
           targetsBox.appendChild(lbl);
         });
+      };
+      // 仅同步勾选态（别的标签页改了 targetState 时调用，不重建 DOM）
+      syncTargets = () => {
+        targetsBox.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = isTargetOn(c.value); });
       };
       rebuildTargets();
       const getTargets = () => [...targetsBox.querySelectorAll('input:checked')].map((c) => c.value);
@@ -680,10 +729,22 @@
         send(ta.value, pendingFiles, true, true, getTargets()); clear();
       };
       panel.querySelector('#dai-cfg').onclick = () => chrome.runtime.sendMessage({ type: 'open-options' });
+      // 折叠/展开同步到持久化的 minimized（设置页与 — 按钮共用同一状态）
+      applyMinimize = () => {
+        const collapsed = adapter.minimized === true;
+        body.style.display = collapsed ? 'none' : '';
+        panel.querySelector('#dai-min').textContent = collapsed ? '＋' : '—';
+      };
+      applyMinimize(); // 按持久化的默认折叠态初始化
       panel.querySelector('#dai-min').onclick = () => {
-        const hidden = body.style.display === 'none';
-        body.style.display = hidden ? '' : 'none';
-        panel.querySelector('#dai-min').textContent = hidden ? '—' : '＋';
+        const collapse = body.style.display !== 'none'; // 当前展开 → 这次要折叠
+        body.style.display = collapse ? 'none' : '';
+        panel.querySelector('#dai-min').textContent = collapse ? '＋' : '—';
+        setSiteFlag(SITE, 'minimized', collapse);
+      };
+      panel.querySelector('#dai-hide').onclick = () => {
+        // 写入 showPanel=false → onChanged 触发 ensurePanel 拆掉本页浮框
+        setSiteFlag(SITE, 'showPanel', false);
       };
 
       panel.querySelector('#dai-log').onclick = () => {
@@ -714,7 +775,7 @@
       const head = panel.querySelector('#dai-head');
       let drag = null;
       head.addEventListener('mousedown', (e) => {
-        if (e.target.id === 'dai-cfg' || e.target.id === 'dai-min') return;
+        if (e.target.id === 'dai-cfg' || e.target.id === 'dai-min' || e.target.id === 'dai-hide') return;
         const r = panel.getBoundingClientRect();
         drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
         panel.style.right = 'auto'; panel.style.bottom = 'auto';

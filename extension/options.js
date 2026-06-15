@@ -20,6 +20,8 @@ function buildRows(config) {
     rows.push({
       id: p.id, preset: true,
       enabled: o.enabled !== false,
+      showPanel: o.showPanel !== false,
+      minimized: o.minimized === true,
       hosts: (Array.isArray(o.hosts) && o.hosts.length ? o.hosts : p.hosts).join(', '),
       // 预设站点：输入框显示覆盖值（空＝用默认，placeholder 提示默认）
       values: FIELDS.reduce((m, f) => { m[f] = o[f] || ''; return m; }, {}),
@@ -33,6 +35,8 @@ function buildRows(config) {
     rows.push({
       id, preset: false,
       enabled: o.enabled !== false,
+      showPanel: o.showPanel !== false,
+      minimized: o.minimized === true,
       hosts: (o.hosts || []).join(', '),
       values: FIELDS.reduce((m, f) => { m[f] = o[f] || ''; return m; }, {}),
       defaults: FIELDS.reduce((m, f) => { m[f] = ''; return m; }, {}),
@@ -47,6 +51,8 @@ function renderRow(row) {
   el.dataset.id = row.id;
   el.dataset.preset = row.preset ? '1' : '0';
   el.querySelector('.f-enabled').checked = row.enabled;
+  el.querySelector('.f-showPanel').checked = row.showPanel;
+  el.querySelector('.f-minimized').checked = row.minimized;
   el.querySelector('.badge').textContent = row.preset ? '内置' : '自定义';
   el.querySelector('.f-hosts').value = row.hosts;
   FIELDS.forEach((f) => {
@@ -71,7 +77,11 @@ function collectConfig() {
   sitesEl.querySelectorAll('.site').forEach((el) => {
     const id = el.dataset.id;
     const preset = el.dataset.preset === '1';
-    const entry = { enabled: el.querySelector('.f-enabled').checked };
+    const entry = {
+      enabled: el.querySelector('.f-enabled').checked,
+      showPanel: el.querySelector('.f-showPanel').checked,
+      minimized: el.querySelector('.f-minimized').checked,
+    };
     const hosts = el.querySelector('.f-hosts').value.split(',').map((s) => s.trim()).filter(Boolean);
     if (hosts.length) entry.hosts = hosts;
     FIELDS.forEach((f) => {
@@ -114,7 +124,7 @@ document.getElementById('save').onclick = async () => {
 document.getElementById('add').onclick = () => {
   renderRow({
     id: 'custom-' + Date.now().toString(36),
-    preset: false, enabled: true, hosts: '',
+    preset: false, enabled: true, showPanel: true, minimized: false, hosts: '',
     values: { name: '', editor: 'div[contenteditable="true"], textarea', send: 'button[type="submit"], button[aria-label*="Send" i]', userMsg: '', uploading: '[role="progressbar"], [class*="loading"]', uploadScope: '', stop: '[class*="stop"]', newChat: '', newChatKey: '' },
     defaults: FIELDS.reduce((m, f) => { m[f] = ''; return m; }, {}),
   });

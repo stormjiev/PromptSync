@@ -93,6 +93,8 @@ window.DAI_mergeSite = function (preset, override) {
   });
   if (Array.isArray(override.hosts) && override.hosts.length) out.hosts = override.hosts;
   if (typeof override.enabled === 'boolean') out.enabled = override.enabled;
+  if (typeof override.showPanel === 'boolean') out.showPanel = override.showPanel;
+  if (typeof override.minimized === 'boolean') out.minimized = override.minimized;
   return out;
 };
 
