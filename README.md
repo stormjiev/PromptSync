@@ -12,6 +12,11 @@
 
 ---
 
+如图:
+![screenshot](screenshot.png)
+![screenshot2](screenshot2.png)
+
+
 ## ✨ 特性
 
 - 🔁 **一处输入，多家同时提问** —— 回车一下，各平台齐刷刷开始回答
