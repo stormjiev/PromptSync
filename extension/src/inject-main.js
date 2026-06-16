@@ -33,6 +33,19 @@
     emit();
   }
 
+  // 说明（关于控制台里偶发的 CSP 报错）：
+  // 在 Gemini 等页面，控制台可能出现类似
+  //   "Connecting to 'https://www.googleadservices.com/...set_partitioned_cookie...'
+  //    violates the following Content Security Policy directive: connect-src ..."
+  // 并且堆栈指向本文件的 origFetch.apply 这一行。这**不是 PromptSync 的错误**：
+  //   1) 发起该请求的是页面自带的 Google Ads/转化跟踪脚本（gtag，URL 里全是
+  //      gclid / gad_source / set_partitioned_cookie 等广告参数），由 Gemini 页面触发；
+  //   2) 拦截它的是 Gemini 自己设置的 CSP 白名单（不含 googleadservices.com），
+  //      装不装本扩展都会发生；
+  //   3) 我们只是包装了 window.fetch 来跟踪上传进度，原样透传 arguments、一个字节不改，
+  //      于是浏览器把"最外层调用帧"贴成了本文件——只是出现在堆栈里，并未导致该错误；
+  //   4) 该广告 URL 不匹配 UPLOAD_URL_RE，start() 直接返回 false，我们既不跟踪它、
+  //      也不读取/上传/外发其内容：无数据泄漏、无功能影响，可安全忽略。
   try {
     const origFetch = window.fetch;
     window.fetch = function (input, init) {

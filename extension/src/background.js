@@ -3,7 +3,21 @@
 // 2) 为用户在设置页新增的自定义站点动态注册内容脚本（无需重新打包扩展）
 //    —— 这是"方便配置其它网页 AI"的关键：用户填好域名+选择器，授权后即可生效。
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+// 防御：任何一个 chrome.* API 在当前 manifest 下不存在（如未声明 "commands"
+// 权限时的 chrome.commands），顶层直接读它的属性会抛 Uncaught TypeError，
+// 进而毒住整个 service worker。统一用 on() 守卫，缺失就跳过、绝不崩溃。
+function on(api, event, handler) {
+  try {
+    const target = api && api[event];
+    if (target && typeof target.addListener === 'function') {
+      target.addListener(handler);
+    }
+  } catch (e) {
+    console.warn('[PromptSync] 注册事件监听失败，已跳过：', event, e);
+  }
+}
+
+on(chrome.runtime, 'onMessage', (msg, sender, sendResponse) => {
   if (msg && msg.type === 'open-options') {
     chrome.runtime.openOptionsPage();
   }
@@ -54,8 +68,8 @@ async function syncDynamicScripts() {
   }
 }
 
-chrome.runtime.onInstalled.addListener(syncDynamicScripts);
-chrome.runtime.onStartup.addListener(syncDynamicScripts);
-chrome.storage.onChanged.addListener((changes, area) => {
+on(chrome.runtime, 'onInstalled', syncDynamicScripts);
+on(chrome.runtime, 'onStartup', syncDynamicScripts);
+on(chrome.storage, 'onChanged', (changes, area) => {
   if (area === 'local' && changes.dai_config) syncDynamicScripts();
 });
