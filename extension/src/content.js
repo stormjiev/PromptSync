@@ -318,7 +318,18 @@
       if (isUploading()) return false;
       const seen = uploadNet.started - (tokenUpBase.get(token) || 0);
       // 2.5s 静默确认：分片/收尾请求之间有间隙，且部分站点网络完成后还要处理缩略图
-      if (seen > 0) return Date.now() - uploadNet.lastChangeAt > 2500;
+      if (seen > 0) {
+        const quiet = Date.now() - uploadNet.lastChangeAt; // 距上次网络上传活动
+        const settled = quiet > 2500;
+        // 纯诊断：第一次放行时记录这次到底等了多久、卡在哪——用于判断 2.5s 阈值是否合理
+        if (settled && !settledLogged.has(token)) {
+          settledLogged.add(token);
+          const total = Date.now() - (tokenStartAt.get(token) || Date.now());
+          dlog(`上传放行(seq=${seq})：路径=静默确认 本任务已见上传=${seen} 次 ` +
+            `静默时长=${quiet}ms(阈值2500) 自任务开始总耗时=${total}ms`);
+        }
+        return settled;
+      }
       if (Date.now() - (tokenStartAt.get(token) || 0) > 8000) {
         if (!graceWarned.has(token)) {
           graceWarned.add(token);
@@ -337,6 +348,7 @@
     const tokenStartAt = new Map();
     const tokenUpBase = new Map();
     const graceWarned = new Set();
+    const settledLogged = new Set(); // 纯诊断：每任务只记一次"上传放行"
     // 已做过"安全重试"的 token（每任务最多重试一次，防无限重试）
     const retriedTokens = new Set();
 
@@ -407,11 +419,44 @@
         if (sentTokens.size > 10) {
           const old = [...sentTokens].sort((a, b) => a - b)[0];
           sentTokens.delete(old); tokenBaselines.delete(old); waitLogAt.delete(old);
-          tokenStartAt.delete(old); tokenUpBase.delete(old); graceWarned.delete(old); retriedTokens.delete(old);
+          tokenStartAt.delete(old); tokenUpBase.delete(old); graceWarned.delete(old); retriedTokens.delete(old); settledLogged.delete(old);
+        }
+        if ((expectedText || '').trim() && hasFiles) {
+          // 带文件：实测 DeepSeek 首次点击常被静默吞掉（附件刚就绪、其内部状态还没认账）。
+          // 故每 ~2500ms 安全补点一次（最多 4 次），直到消息出现/输入框清空/窗口耗尽。
+          // 每次补点前 contentMatches 已确认输入框仍是原文＝铁证没发出去，再点绝不会重复发；
+          // 上传未确认（uploadsSettled=false）时不补点也不耗次数。
+          const verifyUntil = Date.now() + 15000;
+          const maxReclicks = 4;
+          let reclicks = 0;
+          let nextReclickAt = Date.now() + 2500;
+          const verifyF = () => {
+            if (token !== sendToken) return;
+            if (countSentMessages(expectedText) > tokenBaselines.get(token)) { dlog(`发送成功(seq=${seq})：对话中已出现该消息（补点${reclicks}次）`); return; }
+            if (!contentMatches(expectedText)) { dlog(`发送成功(seq=${seq})：输入框已清空/内容已变化（补点${reclicks}次）`); return; }
+            if (isGenerating()) { dlog(`发送成功(seq=${seq})：已检测到正在生成回复（补点${reclicks}次）`); return; }
+            if (Date.now() >= nextReclickAt && reclicks < maxReclicks) {
+              const btn2 = findSend();
+              const canClick = btn2 && !btn2.disabled && btn2.getAttribute('aria-disabled') !== 'true' &&
+                !isStopButton(btn2) && uploadsSettled(token, seq);
+              if (canClick) {
+                reclicks++;
+                nextReclickAt = Date.now() + 2500;
+                dlog(`安全补点发送(seq=${seq})：第${reclicks}/${maxReclicks}次（输入框仍为原文＝确未发出，再点不会重复）`);
+                btn2.click();
+              } else {
+                nextReclickAt = Date.now() + 600; // 发送键暂不可点/上传未确认 → 稍后再判，不耗次数
+              }
+            }
+            if (Date.now() < verifyUntil) { setTimeout(verifyF, 250); return; }
+            dlog(`警告(seq=${seq})：补点${reclicks}次后仍未检测到发送成功，请手动点击发送`);
+          };
+          setTimeout(verifyF, 250);
+          return;
         }
         if ((expectedText || '').trim()) {
-          // 带文件时验证窗口延长到 12s：图片上传/服务端处理可能慢，给安全重试留足时间
-          const verifyUntil = Date.now() + (hasFiles ? 12000 : 5000);
+          // 无文件：保持原逻辑——5s 验证窗口内若迟迟没发出迹象，做一次安全重试
+          const verifyUntil = Date.now() + 5000;
           const verify = () => {
             if (token !== sendToken) return;
             if (countSentMessages(expectedText) > tokenBaselines.get(token)) { dlog(`发送成功(seq=${seq})：对话中已出现该消息`); return; }

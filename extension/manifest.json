@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PromptSync — 多 AI 同步输入",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "一个浮动小框输入/粘贴/拖拽，回车同步发送到 ChatGPT、Gemini、DeepSeek、Qwen 等多家网页 AI；等上传完成后发送、单任务只发一次、绝不重复发送。站点选择器可在设置页可视化编辑。",
   "icons": {
     "16": "icons/icon16.png",
