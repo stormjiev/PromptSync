@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "X-Frame-Options", "operation": "remove" },
+        { "header": "Content-Security-Policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "https://chatgpt.com/*",
+      "resourceTypes": ["sub_frame"]
+    }
+  },
+  {
+    "id": 7,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "X-Frame-Options", "operation": "remove" },
+        { "header": "Content-Security-Policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "https://chat.openai.com/*",
+      "resourceTypes": ["sub_frame"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "X-Frame-Options", "operation": "remove" },
+        { "header": "Content-Security-Policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "https://gemini.google.com/*",
+      "resourceTypes": ["sub_frame"]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "X-Frame-Options", "operation": "remove" },
+        { "header": "Content-Security-Policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "https://chat.deepseek.com/*",
+      "resourceTypes": ["sub_frame"]
+    }
+  }
+]

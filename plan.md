@@ -61,3 +61,57 @@
 
 - `dual-ai-sync.user.js` — Tampermonkey 用户脚本（粘贴进 Tampermonkey 即用）
 - `plan.md` — 本文档
+
+---
+
+# 新功能规划：并排对比分屏面板（Split-Panel Compare）
+
+> 立项日期：2026-06-17 ｜ 分支：`feat/split-panel-compare` ｜ 状态：规划中（未动工）
+> 灵感来源：竞品 [Panelize](https://github.com/Manho/Panelize)（MIT，~28★）。
+> 本节是新增旗舰功能的设计文档；上文 v0.5 内容为历史记录，已不代表当前实现（现为独立 MV3 扩展，见 `extension/`）。
+
+## 目标
+
+把现在"广播后答案散落在各家标签页、要来回切"升级为：**一个扩展内页面（grid 布局）里并排嵌入多家 AI，输入一次→各 iframe 同时填入并发送→并排看回答**。让 PromptSync 从「同步广播器」进化成「多模型对比工作台」。
+
+## 竞品真相（Panelize 怎么做到的）
+
+- 申请权限：`declarativeNetRequest` + `declarativeNetRequestWithHostAccess`（**没有** `windows`/`tabs`/`system.display`）。
+- 机制：一个 `multi-panel` 页面里放 N 个 `<iframe>`，每个加载一家 AI 网站；用 DNR 规则**剥离这些站点响应里的 `X-Frame-Options` 和 `Content-Security-Policy: frame-ancestors`**，使其可被 iframe 嵌入且保留登录态。
+- "15 种布局" = 对这组 iframe 的 CSS grid 排列方案。
+- content script 注入到每个 iframe 内做文本注入与回车发送（复用既有注入逻辑）。
+
+## 技术方案（落到本项目）
+
+1. **新页面** `extension/panel/panel.html` + `panel.js` + `panel.css`：CSS grid 容器，按所选布局放置 N 个 `<iframe src="各 AI 首页">`。入口：popup 加一个「并排对比」按钮 → `chrome.tabs.create({ url: 'panel/panel.html' })`（或独立窗口）。
+2. **DNR 剥头规则** `extension/rules.json`：对支持站点的主框架文档响应，`modifyHeaders` 删除 `X-Frame-Options`、改写 `content-security-policy`（去掉 `frame-ancestors`）。manifest 增 `declarative_net_request.rule_resources`。
+3. **content script 进 iframe**：现有 `content_scripts` 默认 `all_frames:false`，需为面板场景允许在子框架运行注入逻辑（评估用 `all_frames:true` 还是仅 panel 来源放行，避免影响普通浏览体验）。
+4. **广播链路**：panel.js 收集输入（复用现有浮窗 UI 组件）→ 发消息给 `background` → background 用 `chrome.scripting`/`tabs.sendMessage` 向各 iframe 的 frame 下发 `{seq,text,files,send,newChat}` → 各 frame 内复用既有 `adapters.js`/`content.js` 的填字+等上传+点发送+去重逻辑。
+5. **复用看家逻辑**：等上传完成 / 流式中不误点 / 单任务只发一次 / `uploadScope` 防误判——全部沿用，只是运行在 iframe 内。
+
+## 文件结构（计划新增）
+
+- `extension/panel/panel.html|panel.js|panel.css` — 分屏面板页
+- `extension/rules.json` — DNR 剥头规则
+- `extension/manifest.json` — 增 `declarativeNetRequest` 权限 + `declarative_net_request` 段；content_scripts 框架策略调整
+
+## 分阶段（先验证再铺开）
+
+- [ ] **阶段 0 验证**：仅 ChatGPT + Gemini，验证四件事——剥头生效 / iframe 内嵌不被拒 / 登录态保留 / 注入发送成功。Gemini 是最大不确定项，优先实测。
+- [ ] **阶段 1 MVP**：2 家跑通广播 + 1×2 布局 + 入口按钮。
+- [ ] **阶段 2 扩展**：接入 DeepSeek/Qwen，加多种 grid 布局（1×2、2×2、1×3…）。
+- [ ] **阶段 3 打磨**：布局记忆、单格刷新/新对话、同步滚动（可选）、Prompt 库变量替换。
+- [ ] **阶段 4 决策**：评估稳定性与商店合规后，决定是否合回 `main`。
+
+## 风险 / 权衡（重要）
+
+- **安全**：剥离 X-Frame-Options/CSP 会削弱这些站点的点击劫持防护；与 README「无侵入、稳」调性需权衡，面板内应提示用户该模式的性质。
+- **商店合规**：Chrome 审核对「剥 CSP + 嵌第三方登录页」较敏感，可能影响上架 → 这也是先放分支、不进 main 的原因。
+- **登录态**：Google/Gemini 等可能检测 iframe 嵌入而拒绝渲染 → 阶段 0 必须实测，不成立则该家退回「真实标签页广播」老路。
+- **维护成本**：选择器 + 剥头规则 + 每家改版，维护面翻倍。
+- **回退**：分屏作为「可选模式」存在，不替换现有标签页广播；两套并存，互不影响。
+
+## 决策记录
+
+- 采用 **feature 分支** `feat/split-panel-compare`（非单独文件夹）：涉及新权限与剥 CSP 等敏感、可能不稳的改动，分支隔离、不污染可发布的 `main`。
+- 代码物理上仍放在 `extension/panel/` 子目录内，便于打包时整体纳入或剔除。

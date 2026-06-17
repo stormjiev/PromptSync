@@ -1,0 +1,143 @@
+{
+  "manifest_version": 3,
+  "name": "PromptSync — 并排对比",
+  "version": "1.1.1",
+  "description": "在一个窗口里并排对比 ChatGPT、Gemini、DeepSeek。输入一次同时发送，更快横评各家回答。",
+  "default_locale": "en",
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "*://chatgpt.com/*",
+    "*://chat.openai.com/*",
+    "*://gemini.google.com/*",
+    "*://chat.deepseek.com/*",
+    "*://api.github.com/*",
+    "*://raw.githubusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "options_page": "options/options.html",
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "__MSG_actionDefaultTitle__"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "打开并排对比"
+    },
+    "open-prompt-library": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "__MSG_commandOpenPromptLibrary__"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-chatgpt.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-gemini.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://chat.deepseek.com/*"
+      ],
+      "js": [
+        "content-scripts/button-finder-utils.js",
+        "content-scripts/enter-behavior-utils.js",
+        "content-scripts/enter-behavior-deepseek.js",
+        "content-scripts/text-injection-all-providers.js",
+        "content-scripts/focus-toggle.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "bypass_headers",
+        "enabled": true,
+        "path": "rules/bypass-headers.json"
+      }
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "data/prompt-libraries/default-prompts.json",
+        "data/prompt-libraries/default-prompts-zh_CN.json",
+        "data/prompt-libraries/custom-prompt-template.json",
+        "data/prompt-libraries/guide.en.html",
+        "data/prompt-libraries/guide.zh_CN.html",
+        "data/prompt-libraries/guide.zh_TW.html",
+        "data/prompt-libraries/guide.ko.html",
+        "data/prompt-libraries/guide.ja.html",
+        "data/prompt-libraries/guide.es.html",
+        "data/prompt-libraries/guide.fr.html",
+        "data/prompt-libraries/guide.de.html",
+        "data/prompt-libraries/guide.it.html",
+        "data/prompt-libraries/guide.ru.html",
+        "data/version-info.json",
+        "_locales/en/messages.json",
+        "_locales/zh_CN/messages.json",
+        "_locales/zh_TW/messages.json",
+        "multi-panel/multi-panel.html",
+        "multi-panel/multi-panel.js",
+        "multi-panel/multi-panel.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
