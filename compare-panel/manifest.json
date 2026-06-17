@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "PromptSync — 并排对比",
-  "version": "1.1.1",
+  "version": "0.2.15",
+  "author": "stormjiev",
   "description": "在一个窗口里并排对比 ChatGPT、Gemini、DeepSeek。输入一次同时发送，更快横评各家回答。",
   "default_locale": "en",
   "permissions": [

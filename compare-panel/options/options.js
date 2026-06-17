@@ -739,7 +739,7 @@ async function exportData() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `panelize-backup-${Date.now()}.json`;
+    a.download = `promptsync-backup-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
 
@@ -1186,6 +1186,14 @@ async function performVersionCheck() {
     statusDiv.style.display = 'none';
 
     const result = await checkForUpdates();
+
+    // Point the "Download Latest Version" link at the actual latest release asset
+    if (result.downloadUrl) {
+      const downloadLink = document.getElementById('download-latest-link');
+      if (downloadLink) {
+        downloadLink.href = result.downloadUrl;
+      }
+    }
 
     if (result.error) {
       statusDiv.textContent = result.error;

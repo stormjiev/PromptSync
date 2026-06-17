@@ -1,21 +1,21 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "PromptSync"
   },
   "extensionDescription": {
     "message": "并排比较 AI 聊天机器人。在一个窗口中使用 ChatGPT、Claude、Gemini、Grok 等。"
   },
   "commandOpenSidebar": {
-    "message": "打开 Panelize"
+    "message": "打开 PromptSync"
   },
   "commandOpenPromptLibrary": {
     "message": "打开提示词库"
   },
   "actionDefaultTitle": {
-    "message": "打开 Panelize"
+    "message": "打开 PromptSync"
   },
   "settingsTitle": {
-    "message": "设置： Panelize"
+    "message": "设置： PromptSync"
   },
   "settingsSubtitle": {
     "message": "自定义您的多 AI 比较体验"
@@ -84,7 +84,7 @@
     "message": "已启用的提供商"
   },
   "descEnabledProviders": {
-    "message": "选择在 Panelize 中显示哪些 AI 提供商"
+    "message": "选择在 PromptSync 中显示哪些 AI 提供商"
   },
   "sectionKeyboardShortcuts": {
     "message": "键盘快捷键"
@@ -96,13 +96,13 @@
     "message": "启用键盘快捷键"
   },
   "descEnableShortcut": {
-    "message": "切换可在浏览器任何位置打开 Panelize 的全局快捷键。"
+    "message": "切换可在浏览器任何位置打开 PromptSync 的全局快捷键。"
   },
   "labelDefaultShortcuts": {
     "message": "默认快捷键"
   },
   "descDefaultShortcuts": {
-    "message": "Command+Shift+E（Windows/Linux 上为 Ctrl+Shift+E）打开 Panelize。<br>Command+Shift+L（Windows/Linux 上为 Ctrl+Shift+L）打开提示词库。<br>安装后可能需要在 chrome://extensions/shortcuts 中确认或设置快捷键。"
+    "message": "Command+Shift+E（Windows/Linux 上为 Ctrl+Shift+E）打开 PromptSync。<br>Command+Shift+L（Windows/Linux 上为 Ctrl+Shift+L）打开提示词库。<br>安装后可能需要在 chrome://extensions/shortcuts 中确认或设置快捷键。"
   },
   "btnOpenShortcuts": {
     "message": "打开快捷键设置"
@@ -276,7 +276,7 @@
     "message": "下载最新版本"
   },
   "descAbout1": {
-    "message": "Panelize 让您在一个窗口中并排比较多个 AI 聊天机器人。"
+    "message": "PromptSync 让您在一个窗口中并排比较多个 AI 聊天机器人。"
   },
   "descAbout2": {
     "message": "采用隐私优先架构构建。所有数据本地存储。"
@@ -474,7 +474,7 @@
     "message": "您确定要将所有设置重置为默认值吗？\n\n这将重置：\n- 主题设置\n- 默认提供商\n- 键盘快捷键\n- 所有其他首选项\n\n您的提示词不会受到影响。\n\n此操作无法撤销！"
   },
   "contextMenuSendTo": {
-    "message": "发送到 Panelize"
+    "message": "发送到 PromptSync"
   },
   "sidebarPromptGenie": {
     "message": "提示词精灵"
@@ -579,10 +579,10 @@
     "message": "加载中..."
   },
   "optionsPageTitle": {
-    "message": "Panelize - 设置"
+    "message": "PromptSync - 设置"
   },
   "headerSettingsTitle": {
-    "message": "设置： Panelize"
+    "message": "设置： PromptSync"
   },
   "headerSettingsSubtitle": {
     "message": "自定义您的多 AI 比较体验"
@@ -591,7 +591,7 @@
     "message": "启用键盘快捷键"
   },
   "descEnableKeyboardShortcut": {
-    "message": "切换可在浏览器任何位置打开 Panelize 的全局快捷键。"
+    "message": "切换可在浏览器任何位置打开 PromptSync 的全局快捷键。"
   },
   "labelEdgeShortcutHelper": {
     "message": "在 Microsoft Edge 中确认"
@@ -779,7 +779,7 @@
     "message": "打开模式"
   },
   "descOpenMode": {
-    "message": "选择点击图标或使用快捷键时如何打开 Panelize"
+    "message": "选择点击图标或使用快捷键时如何打开 PromptSync"
   },
   "optionTabMode": {
     "message": "标签页（新标签页）"

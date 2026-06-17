@@ -51,16 +51,16 @@
    * Save button tooltip text in different languages
    */
   const SAVE_TOOLTIP_TEXT = {
-    'en': 'Save this conversation to Panelize',
-    'zh_CN': '保存此对话到 Panelize',
-    'zh_TW': '保存此對話到 Panelize',
-    'ja': 'この会話を Panelize に保存',
-    'ko': '이 대화를 Panelize에 저장',
-    'ru': 'Сохранить этот разговор в Panelize',
-    'es': 'Guardar esta conversación en Panelize',
-    'fr': 'Enregistrer cette conversation dans Panelize',
-    'de': 'Dieses Gespräch in Panelize speichern',
-    'it': 'Salva questa conversazione su Panelize'
+    'en': 'Save this conversation to PromptSync',
+    'zh_CN': '保存此对话到 PromptSync',
+    'zh_TW': '保存此對話到 PromptSync',
+    'ja': 'この会話を PromptSync に保存',
+    'ko': '이 대화를 PromptSync에 저장',
+    'ru': 'Сохранить этот разговор в PromptSync',
+    'es': 'Guardar esta conversación en PromptSync',
+    'fr': 'Enregistrer cette conversation dans PromptSync',
+    'de': 'Dieses Gespräch in PromptSync speichern',
+    'it': 'Salva questa conversazione su PromptSync'
   };
 
   /**

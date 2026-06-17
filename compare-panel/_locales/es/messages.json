@@ -1,21 +1,21 @@
 {
   "extensionName": {
-    "message": "Panelize"
+    "message": "PromptSync"
   },
   "extensionDescription": {
     "message": "Extensión de barra lateral multi-IA para acceso rápido a ChatGPT, Claude, Gemini y más"
   },
   "commandOpenSidebar": {
-    "message": "Abrir Panelize con proveedor predeterminado"
+    "message": "Abrir PromptSync con proveedor predeterminado"
   },
   "commandOpenPromptLibrary": {
-    "message": "Abrir Biblioteca de Prompts de Panelize"
+    "message": "Abrir Biblioteca de Prompts de PromptSync"
   },
   "actionDefaultTitle": {
-    "message": "Abrir Panelize"
+    "message": "Abrir PromptSync"
   },
   "settingsTitle": {
-    "message": "Configuración: Panelize"
+    "message": "Configuración: PromptSync"
   },
   "settingsSubtitle": {
     "message": "Personaliza tu experiencia de barra lateral multi-IA"
@@ -84,7 +84,7 @@
     "message": "Proveedores Habilitados"
   },
   "descEnabledProviders": {
-    "message": "Selecciona qué proveedores de IA aparecen en Panelize"
+    "message": "Selecciona qué proveedores de IA aparecen en PromptSync"
   },
   "sectionKeyboardShortcuts": {
     "message": "Atajos de Teclado"
@@ -96,7 +96,7 @@
     "message": "Habilitar Atajos de Teclado"
   },
   "descEnableShortcut": {
-    "message": "Activa el atajo global que abre Panelize desde cualquier lugar del navegador."
+    "message": "Activa el atajo global que abre PromptSync desde cualquier lugar del navegador."
   },
   "labelDefaultShortcuts": {
     "message": "Atajos Predeterminados"
@@ -276,7 +276,7 @@
     "message": "Descargar Última Versión"
   },
   "descAbout1": {
-    "message": "Panelize proporciona acceso rápido a múltiples asistentes de IA en una conveniente barra lateral."
+    "message": "PromptSync proporciona acceso rápido a múltiples asistentes de IA en una conveniente barra lateral."
   },
   "descAbout2": {
     "message": "Construido con arquitectura que prioriza la privacidad. Todos los datos se almacenan localmente."
@@ -480,7 +480,7 @@
     "message": "¿Estás seguro de que quieres restablecer TODA la configuración a valores predeterminados?\n\nEsto restablecerá:\n- Configuración de tema\n- Proveedor predeterminado\n- Atajos de teclado\n- Todas las demás preferencias\n\nTus prompts NO se verán afectados.\n\n¡Esta acción NO se puede deshacer!"
   },
   "contextMenuSendTo": {
-    "message": "Enviar a Panelize"
+    "message": "Enviar a PromptSync"
   },
   "sidebarPromptGenie": {
     "message": "Genio de Prompts"
@@ -585,10 +585,10 @@
     "message": "Cargando..."
   },
   "optionsPageTitle": {
-    "message": "Panelize - Configuración"
+    "message": "PromptSync - Configuración"
   },
   "headerSettingsTitle": {
-    "message": "Configuración: Panelize"
+    "message": "Configuración: PromptSync"
   },
   "headerSettingsSubtitle": {
     "message": "Personaliza tu experiencia de barra lateral multi-IA"
@@ -597,7 +597,7 @@
     "message": "Habilitar Atajos de Teclado"
   },
   "descEnableKeyboardShortcut": {
-    "message": "Activa el atajo global que abre Panelize desde cualquier lugar del navegador."
+    "message": "Activa el atajo global que abre PromptSync desde cualquier lugar del navegador."
   },
   "labelEdgeShortcutHelper": {
     "message": "Confirmar en Microsoft Edge"
@@ -785,7 +785,7 @@
     "message": "Modo de apertura"
   },
   "descOpenMode": {
-    "message": "Elige cómo abrir Panelize al hacer clic en el icono o usar atajos"
+    "message": "Elige cómo abrir PromptSync al hacer clic en el icono o usar atajos"
   },
   "optionTabMode": {
     "message": "Pestaña (Nueva pestaña)"

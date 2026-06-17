@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panelize - AI Comparison</title>
+  <title>PromptSync - AI Comparison</title>
   <link rel="stylesheet" href="multi-panel.css">
 
   <!-- Material Symbols font -->
@@ -33,7 +33,7 @@
     <!-- Top Toolbar（已隐藏：控件移至底部弹出菜单，省屏幕空间；保留折叠按钮以兼容既有 JS） -->
     <header id="toolbar">
       <div class="toolbar-left">
-        <span class="app-title">Panelize</span>
+        <span class="app-title">PromptSync</span>
       </div>
       <div class="toolbar-right">
         <button id="toggle-toolbar-btn" class="toolbar-btn" title="Collapse Toolbar">
@@ -98,10 +98,10 @@
         <button id="prompt-library-btn" class="input-btn" title="Prompt Library">
           <span class="material-symbols-outlined">auto_awesome</span>
         </button>
-        <button id="image-upload-btn" class="input-btn" title="Upload Images">
-          <span class="material-symbols-outlined">add_photo_alternate</span>
+        <button id="image-upload-btn" class="input-btn" title="上传图片 / 文件">
+          <span class="material-symbols-outlined">attach_file</span>
         </button>
-        <input type="file" id="image-file-input" accept="image/*" multiple style="display: none;">
+        <input type="file" id="image-file-input" multiple style="display: none;">
         <div class="input-wrapper">
           <div id="image-preview-container" class="image-preview-container"></div>
           <textarea id="unified-input" placeholder="Enter your question to send to all AI providers..." rows="1"></textarea>
