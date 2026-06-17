@@ -157,6 +157,8 @@
       'form button:has(svg)'
     ],
     deepseek: [
+      'div[role="button"].ds-button--primary',
+      'div[role="button"][aria-label*="send" i]',
       'button[aria-label="Send"]',
       'button[type="submit"]'
     ],
@@ -1064,21 +1066,54 @@
     return null;
   }
 
-  // 等“上传完成 / 发送按钮可用”后再点发送：解决带附件时按钮仍禁用导致发不出去
-  async function clickSendWhenReady(provider, providerMode = null, maxWaitMs = 30000) {
-    // 先给一点时间让“上传中→禁用”状态生效，避免附件刚加入、按钮短暂可用就误发
-    await sleep(700);
+  // 各家“上传进行中”指示器：出现=正在上传，消失=上传完成（比“按钮可用”更可靠）
+  const UPLOAD_INDICATOR_SELECTORS = {
+    chatgpt: ['[data-testid="composer-attachment-loading"]', '.animate-spin', 'div[role="progressbar"]'],
+    gemini: ['mat-progress-bar', '.mat-mdc-progress-bar', 'mat-spinner', 'mat-progress-spinner', '.mat-mdc-progress-spinner', '[role="progressbar"]'],
+    deepseek: ['[class*="uploading"]', '[class*="ant-upload"][class*="progress"]', '[role="progressbar"]', '[class*="progress"]'],
+  };
+
+  function isIndicatorVisible(el) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function isUploadInProgress(provider) {
+    const sels = UPLOAD_INDICATOR_SELECTORS[provider] || [];
+    for (const sel of sels) {
+      try {
+        for (const el of document.querySelectorAll(sel)) {
+          if (isIndicatorVisible(el)) return true;
+        }
+      } catch {}
+    }
+    return false;
+  }
+
+  // 等“上传完成（指示器消失）”后再点发送，避免 Gemini 早发 / DeepSeek 空等
+  async function clickSendWhenReady(provider, providerMode = null, maxWaitMs = 20000) {
     const deadline = Date.now() + maxWaitMs;
-    while (Date.now() < deadline) {
+    // 给上传指示器一点出现的时间（注入图片后 UI 需一拍才进入上传态）
+    await sleep(350);
+    // 1) 若正在上传，等指示器消失（DeepSeek 上传快会很快跳出，不再空等）
+    while (Date.now() < deadline && isUploadInProgress(provider)) {
+      await sleep(250);
+    }
+    // 2) 上传完成后稍作稳定，再等发送按钮可用并点击
+    await sleep(200);
+    const clickDeadline = Math.min(deadline, Date.now() + 6000);
+    while (Date.now() < clickDeadline) {
       const btn = findEnabledSendButton(provider);
       if (btn) {
         console.log('[Text Injection] Send button ready, clicking for:', provider);
         btn.click();
         return true;
       }
-      await sleep(400);
+      await sleep(250);
     }
-    console.warn('[Text Injection] Upload wait timed out, fallback click for:', provider);
+    // 兜底：直接尝试点击/Enter（deepseek 等有 Enter fallback）
+    console.warn('[Text Injection] Send button not enabled in time, fallback click for:', provider);
     return clickSendButton(provider, providerMode);
   }
 
