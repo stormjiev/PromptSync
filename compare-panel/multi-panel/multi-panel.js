@@ -1541,21 +1541,16 @@ const MAX_IMAGE_COUNT = 10;
 
 async function addImage(file) {
   try {
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      showToast('Please select an image file');
-      return false;
-    }
-
+    // 不再限制为图片：注入端用 DataTransfer 注入任意文件到各家 input[type=file]
     // Validate file size
     if (file.size > MAX_IMAGE_SIZE) {
-      showToast('Image size must be less than 20MB');
+      showToast('File size must be less than 20MB');
       return false;
     }
 
-    // Validate image count
+    // Validate attachment count
     if (uploadedImages.length >= MAX_IMAGE_COUNT) {
-      showToast(`Maximum ${MAX_IMAGE_COUNT} images allowed`);
+      showToast(`Maximum ${MAX_IMAGE_COUNT} files allowed`);
       return false;
     }
 
@@ -1568,7 +1563,8 @@ async function addImage(file) {
       id: imageId,
       name: file.name,
       type: file.type,
-      dataUrl: dataUrl
+      dataUrl: dataUrl,
+      isImage: !!(file.type && file.type.startsWith('image/'))
     });
 
     // Render preview
@@ -1600,6 +1596,32 @@ function clearAllImages() {
   renderImagePreviews();
 }
 
+// 文件名转义，避免破坏 alt/title 属性
+function escapeAttachmentName(name) {
+  return String(name == null ? '' : name)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// 删除按钮用事件委托（扩展页 CSP 为 script-src 'self'，内联 onclick 会被拦截）
+let removeDelegationBound = false;
+function ensureRemoveDelegation() {
+  if (removeDelegationBound) return;
+  const container = document.getElementById('image-preview-container');
+  if (!container) return;
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('.remove-image');
+    if (!btn) return;
+    const item = btn.closest('.image-preview-item');
+    if (item && item.dataset.imageId) {
+      removeImage(item.dataset.imageId);
+    }
+  });
+  removeDelegationBound = true;
+}
+
 function renderImagePreviews() {
   const container = document.getElementById('image-preview-container');
 
@@ -1608,17 +1630,28 @@ function renderImagePreviews() {
     return;
   }
 
-  container.innerHTML = uploadedImages.map(img => `
-    <div class="image-preview-item" data-image-id="${img.id}">
-      <img src="${img.dataUrl}" alt="${img.name}">
-      <button class="remove-image" onclick="window.removeImageById('${img.id}')" title="Remove">
+  ensureRemoveDelegation();
+
+  container.innerHTML = uploadedImages.map(img => {
+    const safeName = escapeAttachmentName(img.name);
+    const isImage = img.isImage != null ? img.isImage : !!(img.type && img.type.startsWith('image/'));
+    const inner = isImage
+      ? `<img src="${img.dataUrl}" alt="${safeName}">`
+      : `<div class="attachment-file">
+           <span class="material-symbols-outlined attachment-file-icon">description</span>
+           <span class="attachment-name">${safeName}</span>
+         </div>`;
+    return `
+    <div class="image-preview-item${isImage ? '' : ' is-file'}" data-image-id="${img.id}" title="${safeName}">
+      ${inner}
+      <button class="remove-image" type="button" title="Remove">
         <span class="material-symbols-outlined">close</span>
       </button>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
-// Expose removeImage to window for onclick handler
+// 兼容旧调用入口（已不再用于内联 onclick）
 window.removeImageById = (imageId) => {
   removeImage(imageId);
 };
@@ -2052,7 +2085,7 @@ function setupEventListeners() {
     e.preventDefault();
     inputWrapper.classList.remove('drag-over');
 
-    const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+    const files = Array.from(e.dataTransfer.files);
     for (const file of files) {
       await addImage(file);
     }
@@ -2160,16 +2193,28 @@ function setupEventListeners() {
     }
   });
 
-  // Paste image support (must be after inputTextarea is defined)
+  // Paste 支持：图片与任意文件（command+v）
   inputTextarea.addEventListener('paste', async (e) => {
-    const items = Array.from(e.clipboardData.items);
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) {
-          await addImage(file);
+    const dt = e.clipboardData;
+    if (!dt) return;
+
+    // 收集剪贴板里的文件：优先 files，回退到 items 中 kind==='file'
+    const files = [];
+    if (dt.files && dt.files.length) {
+      for (const f of dt.files) files.push(f);
+    } else if (dt.items) {
+      for (const item of Array.from(dt.items)) {
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) files.push(f);
         }
+      }
+    }
+
+    if (files.length) {
+      e.preventDefault(); // 有文件才拦截，纯文本粘贴照常
+      for (const f of files) {
+        await addImage(f);
       }
     }
   });
