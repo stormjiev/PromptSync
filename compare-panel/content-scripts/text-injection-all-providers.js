@@ -1070,7 +1070,7 @@
   const UPLOAD_INDICATOR_SELECTORS = {
     chatgpt: ['[data-testid="composer-attachment-loading"]', '.animate-spin', 'div[role="progressbar"]'],
     gemini: ['mat-progress-bar', '.mat-mdc-progress-bar', 'mat-spinner', 'mat-progress-spinner', '.mat-mdc-progress-spinner', '[role="progressbar"]'],
-    deepseek: ['[class*="uploading"]', '[class*="ant-upload"][class*="progress"]', '[role="progressbar"]', '[class*="progress"]'],
+    deepseek: ['.ant-upload-list-item-uploading', '[class*="uploading"]', '[class*="ant-upload"][class*="progress"]'],
   };
 
   function isIndicatorVisible(el) {
@@ -1091,17 +1091,28 @@
     return false;
   }
 
+  // 等上传指示器消失的 per-provider 上限：防止指示器选择器误判（命中常驻元素）导致空等
+  const UPLOAD_WAIT_CAP_MS = {
+    chatgpt: 15000,
+    gemini: 15000,
+    deepseek: 2500,
+  };
+
   // 等“上传完成（指示器消失）”后再点发送，避免 Gemini 早发 / DeepSeek 空等
   async function clickSendWhenReady(provider, providerMode = null, maxWaitMs = 20000) {
     const deadline = Date.now() + maxWaitMs;
     // 给上传指示器一点出现的时间（注入图片后 UI 需一拍才进入上传态）
     await sleep(350);
-    // 1) 若正在上传，等指示器消失（DeepSeek 上传快会很快跳出，不再空等）
-    while (Date.now() < deadline && isUploadInProgress(provider)) {
-      await sleep(250);
+    // 1) 等指示器消失，但设 per-provider 上限：即便选择器误判也最多等这么久
+    const uploadCap = UPLOAD_WAIT_CAP_MS[provider] != null ? UPLOAD_WAIT_CAP_MS[provider] : 12000;
+    const uploadStart = Date.now();
+    while (isUploadInProgress(provider) &&
+           (Date.now() - uploadStart) < uploadCap &&
+           Date.now() < deadline) {
+      await sleep(200);
     }
     // 2) 上传完成后稍作稳定，再等发送按钮可用并点击
-    await sleep(200);
+    await sleep(150);
     const clickDeadline = Math.min(deadline, Date.now() + 6000);
     while (Date.now() < clickDeadline) {
       const btn = findEnabledSendButton(provider);
