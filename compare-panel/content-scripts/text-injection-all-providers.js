@@ -1092,18 +1092,42 @@
   }
 
   // 等上传指示器消失的 per-provider 上限：防止指示器选择器误判（命中常驻元素）导致空等
+  // DeepSeek 取小值快速首点，靠下方“补点”兜底；ChatGPT/Gemini 上传指示器准确，留足余量
   const UPLOAD_WAIT_CAP_MS = {
     chatgpt: 15000,
     gemini: 15000,
-    deepseek: 2500,
+    deepseek: 2000,
   };
 
-  // 等“上传完成（指示器消失）”后再点发送，避免 Gemini 早发 / DeepSeek 空等
-  async function clickSendWhenReady(provider, providerMode = null, maxWaitMs = 20000) {
+  // 读取当前输入框文本（用于判断“是否还是原文＝没发出去”）
+  function getEditorText(provider) {
+    const sels = PROVIDER_SELECTORS[provider];
+    if (!sels) return null;
+    for (const sel of sels) {
+      let el;
+      try { el = document.querySelector(sel); } catch { continue; }
+      if (el) {
+        const v = (el.value != null ? el.value : (el.innerText || el.textContent || ''));
+        return String(v);
+      }
+    }
+    return null;
+  }
+
+  // 发送是否已生效：输入框不再包含原文（被清空/变化）＝已发出（借鉴原 PromptSync 的 contentMatches）
+  function looksSent(provider, expectedText) {
+    const needle = (expectedText || '').trim();
+    if (!needle) return false; // 无文字时无法用此判据
+    const cur = getEditorText(provider);
+    if (cur == null) return false;
+    return !cur.includes(needle);
+  }
+
+  // 等“上传完成”后点发送；带文字+文件时按“输入框是否清空”验证并安全补点（移植自原 PromptSync）
+  async function clickSendWhenReady(provider, providerMode = null, expectedText = '', hasFiles = false, maxWaitMs = 20000) {
     const deadline = Date.now() + maxWaitMs;
-    // 给上传指示器一点出现的时间（注入图片后 UI 需一拍才进入上传态）
     await sleep(350);
-    // 1) 等指示器消失，但设 per-provider 上限：即便选择器误判也最多等这么久
+    // 1) 等上传指示器消失，per-provider 上限兜底（即便选择器误判也最多等这么久）
     const uploadCap = UPLOAD_WAIT_CAP_MS[provider] != null ? UPLOAD_WAIT_CAP_MS[provider] : 12000;
     const uploadStart = Date.now();
     while (isUploadInProgress(provider) &&
@@ -1111,21 +1135,55 @@
            Date.now() < deadline) {
       await sleep(200);
     }
-    // 2) 上传完成后稍作稳定，再等发送按钮可用并点击
     await sleep(150);
+
+    // 2) 首次点击：等发送键可用（短窗口），不行则兜底点击/回车
     const clickDeadline = Math.min(deadline, Date.now() + 6000);
+    let clicked = false;
     while (Date.now() < clickDeadline) {
       const btn = findEnabledSendButton(provider);
       if (btn) {
         console.log('[Text Injection] Send button ready, clicking for:', provider);
         btn.click();
-        return true;
+        clicked = true;
+        break;
       }
       await sleep(250);
     }
-    // 兜底：直接尝试点击/Enter（deepseek 等有 Enter fallback）
-    console.warn('[Text Injection] Send button not enabled in time, fallback click for:', provider);
-    return clickSendButton(provider, providerMode);
+    if (!clicked) {
+      console.warn('[Text Injection] Send button not enabled in time, fallback click for:', provider);
+      clickSendButton(provider, providerMode);
+    }
+
+    // 3) 带文字+文件：DeepSeek 首点常被静默吞掉。按“输入框是否清空”验证，每 ~2.5s 安全补点
+    //    （最多 4 次）——补点前确认输入框仍是原文＝没发出去，再点绝不重复发
+    const hasText = !!(expectedText && expectedText.trim());
+    if (hasText && hasFiles) {
+      const verifyUntil = Date.now() + 15000;
+      const maxReclicks = 4;
+      let reclicks = 0;
+      let nextReclickAt = Date.now() + 2500;
+      while (Date.now() < verifyUntil) {
+        if (looksSent(provider, expectedText)) {
+          console.log(`[Text Injection] Sent confirmed (input cleared) for ${provider}, reclicks=${reclicks}`);
+          return true;
+        }
+        if (Date.now() >= nextReclickAt && reclicks < maxReclicks) {
+          const btn2 = findEnabledSendButton(provider);
+          if (btn2 && !isUploadInProgress(provider)) {
+            reclicks++;
+            nextReclickAt = Date.now() + 2500;
+            console.log(`[Text Injection] Safe re-click ${reclicks}/${maxReclicks} for ${provider} (input still original = not sent)`);
+            btn2.click();
+          } else {
+            nextReclickAt = Date.now() + 600; // 按钮暂不可点/仍在上传 → 稍后再判，不耗次数
+          }
+        }
+        await sleep(250);
+      }
+      console.warn(`[Text Injection] Re-clicked ${reclicks} times but no sent signal for ${provider}`);
+    }
+    return true;
   }
 
   // Special handler for Google to create "new search"
@@ -1498,7 +1556,7 @@
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
           return;
         }
-        await clickSendWhenReady(provider, providerMode);
+        await clickSendWhenReady(provider, providerMode, text, true);
       }
     } catch (error) {
       console.error('[Image Injection] Error:', error);
