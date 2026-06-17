@@ -2015,6 +2015,24 @@ function setupEventListeners() {
   // Add panel button
   document.getElementById('add-panel-btn').addEventListener('click', showAddPanelMenu);
 
+  // 底部弹出菜单：tune 按钮开合，点击面板外部关闭（顶栏控件已收纳于此）
+  const bottomMenuBtn = document.getElementById('bottom-menu-btn');
+  const bottomMenuPanel = document.getElementById('bottom-menu-panel');
+  if (bottomMenuBtn && bottomMenuPanel) {
+    bottomMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = bottomMenuPanel.classList.contains('hidden');
+      bottomMenuPanel.classList.toggle('hidden', !willOpen);
+      bottomMenuBtn.classList.toggle('active', willOpen);
+    });
+    document.addEventListener('click', (e) => {
+      if (bottomMenuPanel.classList.contains('hidden')) return;
+      if (bottomMenuPanel.contains(e.target) || bottomMenuBtn.contains(e.target)) return;
+      bottomMenuPanel.classList.add('hidden');
+      bottomMenuBtn.classList.remove('active');
+    });
+  }
+
   // Toggle toolbar button and expand bar
   document.getElementById('toggle-toolbar-btn').addEventListener('click', toggleToolbar);
   document.getElementById('toolbar-expand-bar').addEventListener('click', toggleToolbar);
@@ -2434,9 +2452,10 @@ async function showAddPanelMenu() {
 
   const menu = document.createElement('div');
   menu.className = 'add-panel-menu';
+  // 按钮已移至底部弹出菜单，菜单改为向上弹出，避免溢出视口底部
   menu.style.cssText = `
     position: fixed;
-    top: ${rect.bottom + 4}px;
+    bottom: ${window.innerHeight - rect.top + 4}px;
     left: ${rect.left}px;
     background: ${palette.menuBackground};
     border: 1px solid ${palette.menuBorder};
