@@ -1400,10 +1400,8 @@ async function broadcastMessage(text, autoSubmit = true) {
     return;
   }
 
-  // When images are present, always fill first without auto-submit
-  // User needs to click "Send All" again to actually send
-  // This gives users a chance to verify content before sending
-  const shouldAutoSubmit = hasImages ? false : autoSubmit;
+  // 有附件时也尊重发送意图：注入端会等上传完成（发送按钮可用）后再发送
+  const shouldAutoSubmit = autoSubmit;
   const sendFocusRequestId = shouldAutoSubmit
     ? restoreUnifiedInputFocusAfterSend(getChatgptPanelsWithFrames())
     : null;
@@ -1678,6 +1676,18 @@ async function newChatAllProviders() {
   setTimeout(() => {
     newChatBtn.disabled = false;
   }, 1000);
+}
+
+// 整合「新对话 + 发送全部」：各家先开新对话，等界面就绪后再广播发送
+// （含附件时由注入端 clickSendWhenReady 等上传完成）
+async function sendAllWithNewChat() {
+  const input = document.getElementById('unified-input');
+  const text = input.value;
+  await newChatAllProviders();
+  // 给新对话界面留出加载就绪时间再发送；慢站点可调大此延时
+  setTimeout(() => {
+    broadcastMessage(text, true);
+  }, 1500);
 }
 
 function scheduleTemporaryChatRetry(panel, delay) {
@@ -2190,6 +2200,16 @@ function setupEventListeners() {
     const input = document.getElementById('unified-input');
     broadcastMessage(input.value, true);
   });
+
+  // New Chat + Send All button（先开新对话再发送）
+  const sendAllNewChatBtn = document.getElementById('send-all-newchat-btn');
+  if (sendAllNewChatBtn) {
+    sendAllNewChatBtn.addEventListener('pointerdown', preserveSendAllButtonFocus);
+    sendAllNewChatBtn.addEventListener('mousedown', preserveSendAllButtonFocus);
+    sendAllNewChatBtn.addEventListener('click', () => {
+      sendAllWithNewChat();
+    });
+  }
 
   // Input textarea
   const inputTextarea = document.getElementById('unified-input');

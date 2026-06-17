@@ -1034,6 +1034,54 @@
     return false;
   }
 
+  // 找到“当前可用（未禁用）”的发送按钮，找不到返回 null
+  function findEnabledSendButton(provider) {
+    const selectors = SEND_BUTTON_SELECTORS[provider];
+    if (!selectors) return null;
+    for (const selector of selectors) {
+      let elements;
+      try { elements = document.querySelectorAll(selector); } catch { continue; }
+      for (const element of elements) {
+        let target = element;
+        const tag = (target.tagName || '').toLowerCase();
+        if (tag === 'svg') {
+          let parent = target.parentElement;
+          while (parent && parent !== document.body) {
+            if (parent.tagName === 'BUTTON' || parent.getAttribute('role') === 'button' ||
+                parent.classList.contains('send-button-container')) {
+              target = parent;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+        }
+        const disabled = target.disabled ||
+          target.getAttribute('aria-disabled') === 'true' ||
+          target.classList.contains('disabled');
+        if (!disabled) return target;
+      }
+    }
+    return null;
+  }
+
+  // 等“上传完成 / 发送按钮可用”后再点发送：解决带附件时按钮仍禁用导致发不出去
+  async function clickSendWhenReady(provider, providerMode = null, maxWaitMs = 30000) {
+    // 先给一点时间让“上传中→禁用”状态生效，避免附件刚加入、按钮短暂可用就误发
+    await sleep(700);
+    const deadline = Date.now() + maxWaitMs;
+    while (Date.now() < deadline) {
+      const btn = findEnabledSendButton(provider);
+      if (btn) {
+        console.log('[Text Injection] Send button ready, clicking for:', provider);
+        btn.click();
+        return true;
+      }
+      await sleep(400);
+    }
+    console.warn('[Text Injection] Upload wait timed out, fallback click for:', provider);
+    return clickSendButton(provider, providerMode);
+  }
+
   // Special handler for Google to create "new search"
   function handleGoogleNewSearch(mode) {
     const normalizedMode = normalizeGoogleProviderMode(mode);
@@ -1392,18 +1440,19 @@
       // Wait for images to upload
       await sleep(500);
 
-      // Then inject text if provided
+      // Then inject text if provided（仅填充，不在 injectText 内部点发送，统一交给下方等待逻辑）
       if (text && text.trim()) {
         await sleep(300);
-        injectText(provider, text, autoSubmit && allImagesInjected, providerMode);
-      } else if (autoSubmit) {
+        injectText(provider, text, false, providerMode);
+      }
+
+      // autoSubmit：轮询等上传完成（发送按钮可用）后再发送，解决“带附件只填不发”
+      if (autoSubmit) {
         if (!allImagesInjected) {
           console.warn('[Image Injection] Skipping auto-submit because image injection failed for:', provider);
           return;
         }
-        // If no text but autoSubmit is true, click send button
-        await sleep(300);
-        clickSendButton(provider, providerMode);
+        await clickSendWhenReady(provider, providerMode);
       }
     } catch (error) {
       console.error('[Image Injection] Error:', error);
